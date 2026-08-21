@@ -1,0 +1,27 @@
+package in.zygertechnology.zygererp.entity;
+
+import jakarta.persistence.*;
+import lombok.*;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.math.BigDecimal;
+
+@Entity @Table(name = "route_sheet") @Getter @Setter @DocKey("route-sheet")
+public class RouteSheet extends BaseDoc implements DocEntity {
+    @Column(name = "route_number", unique = true) String routeNumber;
+    @Column(name = "item_code", nullable = false, length = 60) String itemCode;
+    @Column(name = "item_revision", length = 30) String itemRevision;
+    @Column(name = "route_version", length = 30) String routeVersion;
+    @Column(length = 200) String description;
+    @Column(name = "effective_from") LocalDate effectiveFrom;
+    @Column(name = "effective_to") LocalDate effectiveTo;
+    @Column(name = "base_quantity") BigDecimal baseQuantity;
+    @Column(name = "base_uom", length = 20) String baseUom;
+    @Column(name = "approved_by", length = 60) String approvedBy;
+
+    @OneToMany(mappedBy = "doc", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
+    List<RouteOperation> operations = new ArrayList<>();
+
+    @Override public List<RouteOperation> getLines() { return operations; }
+}

@@ -1,0 +1,97 @@
+export type DocumentStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'APPROVED'
+  | 'POSTED'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export type DocumentAction =
+  | 'submit'
+  | 'approve'
+  | 'reject'
+  | 'post'
+  | 'cancel'
+  | 'reopen';
+
+export interface PoInwardLinePayload {
+  itemCode: string;
+  receivedQty: number;
+  rate?: number;
+  acceptedQty?: number;
+  rejectedQty?: number;
+  batchNo?: string;
+  heatNo?: string;
+  location: string;
+  remarks?: string;
+}
+
+export interface PoInwardPayload {
+  date: string;
+  supplier: string;
+  purchaseOrderNo: string;
+  supplierChallanNo?: string;
+  supplierInvoiceNo?: string;
+  dcNumber?: string;
+  qcRequired?: string;
+  vehicleNo?: string;
+  receivedBy: string;
+  remarks?: string;
+  lines: PoInwardLinePayload[];
+}
+
+export interface PoInwardLineDto {
+  itemCode: string;
+  itemDesc?: string;
+  uom?: string;
+  receivedQty?: number;
+  rate?: number;
+  amount?: number;
+  acceptedQty?: number;
+  rejectedQty?: number;
+  batchNo?: string;
+  heatNo?: string;
+  location?: string;
+  remarks?: string;
+}
+
+export interface PoInwardDto {
+  id?: string;
+  docNo?: string;
+  date: string;
+  supplier: string;
+  purchaseOrderNo: string;
+  supplierChallanNo?: string;
+  supplierInvoiceNo?: string;
+  dcNumber?: string;
+  qcRequired?: string;
+  vehicleNo?: string;
+  receivedBy: string;
+  remarks?: string;
+  status: DocumentStatus;
+  lines: PoInwardLineDto[];
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PoInwardListRowDto {
+  id: string;
+  docNo: string;
+  date: string;
+  firstItemCode?: string;
+  firstItemName?: string;
+  supplier?: string;
+  firstRate?: number;
+  totalAmount?: number;
+  totalQty?: number;
+  status: DocumentStatus;
+}
+
+export interface PoInwardListParams {
+  page: number;
+  size: number;
+  sort?: string;
+  search?: string;
+  status?: string;
+}

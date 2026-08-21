@@ -1,0 +1,252 @@
+import { useEffect, useState } from 'react';
+import apiClient from '../../../api/axiosClient';
+import { useToast } from '../../../contexts/ToastContext';
+import { getApiErrorMessage } from '../../../utils/apiError';
+import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import { printDocument as printDoc } from '../../../utils/printDocument';
+
+interface LogSheet {
+  id: number;
+  logNumber: string;
+  logDate: string;
+  workOrderNumber: string;
+  jobCardNumber: string;
+  machineCode: string;
+  operatorCode: string;
+  shiftCode: string;
+  status: string;
+  remarks: string;
+  activities?: Activity[];
+}
+
+interface Activity {
+  id: number;
+  activityType: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  quantity: number;
+  remarks: string;
+}
+
+const SC: Record<string, { color: string; bg: string }> = {
+  DRAFT: { color: '#888', bg: '#e9ecef' }, VERIFIED: { color: '#2563eb', bg: '#dbeafe' },
+  CLOSED: { color: '#22c55e', bg: '#d4edda' }, CANCELLED: { color: '#991b1b', bg: '#fde2e2' },
+};
+
+const ACT_TYPES = ['SETUP', 'PRODUCTION', 'TOOL_CHANGE', 'INSPECTION', 'MATERIAL_WAITING', 'MACHINE_BREAKDOWN', 'PROGRAM_WAITING', 'OPERATOR_WAITING', 'QUALITY_WAITING', 'MAINTENANCE', 'REWORK', 'CLEANING', 'OTHER'];
+
+export default function ProductionLogScreen() {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<LogSheet[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<Record<string, unknown>>({});
+  const [editId, setEditId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<LogSheet | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState('');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loadingActs, setLoadingActs] = useState(false);
+  const [actForm, setActForm] = useState<Record<string, unknown>>({});
+  const [editActId, setEditActId] = useState<number | null>(null);
+  const [deleteActTarget, setDeleteActTarget] = useState<Activity | null>(null);
+  const [tab, setTab] = useState<'list' | 'form'>('list');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await apiClient.get('/v1/production/log-sheets');
+      setRows(Array.isArray(data) ? data : data.content ?? []);
+    } catch (e) { toast(getApiErrorMessage(e, 'Load failed.'), 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      if (editId) { await apiClient.put(`/v1/production/log-sheets/${editId}`, form); toast('Log sheet updated.'); }
+      else { await apiClient.post('/v1/production/log-sheets', form); toast('Log sheet created.'); }
+      setForm({}); setEditId(null); setTab('list'); load();
+    } catch (e) { toast(getApiErrorMessage(e, 'Save failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const del = async () => {
+    if (!deleteTarget) return;
+    setBusy(true);
+    try { await apiClient.delete(`/v1/production/log-sheets/${deleteTarget.id}`); toast('Deleted.'); setDeleteTarget(null); load(); }
+    catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const action = async (id: number, act: string) => {
+    try { await apiClient.post(`/v1/production/log-sheets/${id}/actions/${act}`); toast(`Log sheet ${act}.`); load(); }
+    catch (e) { toast(getApiErrorMessage(e, 'Action failed.'), 'error'); }
+  };
+
+  const loadActivities = async (id: number) => {
+    if (expandedId === id) { setExpandedId(null); setActivities([]); return; }
+    setExpandedId(id);
+    setLoadingActs(true);
+    try {
+      const { data } = await apiClient.get(`/v1/production/log-sheets/${id}/activities`);
+      setActivities(Array.isArray(data) ? data : data.content ?? []);
+    } catch (e) { toast(getApiErrorMessage(e, 'Failed.'), 'error'); setActivities([]); }
+    setLoadingActs(false);
+  };
+
+  const saveAct = async () => {
+    if (!expandedId) return;
+    if (!String(actForm.activityType ?? '').trim()) { toast('Activity Type is required.', 'error'); return; }
+    setBusy(true);
+    try {
+      if (editActId) { await apiClient.put(`/v1/production/log-sheets/activities/${editActId}`, actForm); toast('Activity updated.'); }
+      else { await apiClient.post(`/v1/production/log-sheets/${expandedId}/activities`, actForm); toast('Activity added.'); }
+      setActForm({}); setEditActId(null); loadActivities(expandedId);
+    } catch (e) { toast(getApiErrorMessage(e, 'Save failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const delAct = async () => {
+    if (!deleteActTarget) return;
+    setBusy(true);
+    try { await apiClient.delete(`/v1/production/log-sheets/activities/${deleteActTarget.id}`); toast('Deleted.'); setDeleteActTarget(null); if (expandedId) loadActivities(expandedId); }
+    catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const set = (k: string, v: unknown) => setForm((c) => ({ ...c, [k]: v }));
+  const setAct = (k: string, v: unknown) => setActForm((c) => ({ ...c, [k]: v }));
+
+  const printDocument = (id: number | string, mode: 'print' | 'download' = 'print') => {
+    const base = import.meta.env.VITE_API_BASE_URL || '/api';
+    printDoc(`${base}/v1/production/log-sheets/${id}/print?download=${mode === 'download'}`, mode);
+  };
+
+  const filtered = rows.filter((r) => !search || (r.logNumber ?? '').toLowerCase().includes(search.toLowerCase()) || (r.workOrderNumber ?? '').toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <>
+      <div className="pg-head"><h1>Production Log Sheet</h1><p>Record shop-floor activities during production</p></div>
+
+      {tab === 'form' && (
+        <div className="panel">
+          <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Log Sheet</h2></div>
+          <div className="fgrid">
+            <label className="fld"><span>Log Date</span><input className="in" type="date" value={String(form.logDate ?? '').slice(0, 10)} onChange={(e) => set('logDate', e.target.value)} /></label>
+            <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
+            <label className="fld"><span>Job Card No</span><input className="in" value={String(form.jobCardNumber ?? '')} onChange={(e) => set('jobCardNumber', e.target.value)} /></label>
+            <label className="fld"><span>Machine Code</span><input className="in" value={String(form.machineCode ?? '')} onChange={(e) => set('machineCode', e.target.value)} /></label>
+            <label className="fld"><span>Operator Code</span><input className="in" value={String(form.operatorCode ?? '')} onChange={(e) => set('operatorCode', e.target.value)} /></label>
+            <label className="fld"><span>Shift Code</span><input className="in" value={String(form.shiftCode ?? '')} onChange={(e) => set('shiftCode', e.target.value)} /></label>
+            <label className="fld"><span>Remarks</span><input className="in" value={String(form.remarks ?? '')} onChange={(e) => set('remarks', e.target.value)} /></label>
+          </div>
+          <div className="actbar">
+            <span className="lft">{editId && <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }} disabled={busy}>Cancel</button>}</span>
+            <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }}>Back</button>
+            <button className="btn btn-p" onClick={save} disabled={busy}>{editId ? 'Update' : 'Create'}</button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'list' && (
+        <div className="panel">
+          <div className="toolbar">
+            <input className="in" placeholder="Search log sheets..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Log Sheet</button>
+          </div>
+          <div className="twrap">
+            {loading ? <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading...</div> : (
+              <table className="tbl">
+                <thead><tr><th style={{ width: 40 }}></th><th>Log No</th><th>Work Order</th><th>Machine</th><th>Operator</th><th>Shift</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {filtered.length === 0 ? <tr><td colSpan={8}><div className="empty"><span className="material-symbols-rounded">description</span> No log sheets.</div></td></tr> : filtered.map((r) => (
+                    <>
+                      <tr key={r.id} onClick={() => loadActivities(r.id)} style={{ cursor: 'pointer' }}>
+                        <td><span className="material-symbols-rounded">{expandedId === r.id ? 'expand_less' : 'expand_more'}</span></td>
+                        <td><b>{r.logNumber}</b></td>
+                        <td>{r.workOrderNumber ?? '-'}</td>
+                        <td>{r.machineCode ?? '-'}</td>
+                        <td>{r.operatorCode ?? '-'}</td>
+                        <td>{r.shiftCode ?? '-'}</td>
+                        <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                        <td>
+                          {r.status === 'DRAFT' && <button className="ibtn" title="Verify" onClick={(e) => { e.stopPropagation(); action(r.id, 'verify'); }}><span className="material-symbols-rounded">fact_check</span></button>}
+                          {r.status === 'VERIFIED' && <button className="ibtn" title="Close" onClick={(e) => { e.stopPropagation(); action(r.id, 'close'); }}><span className="material-symbols-rounded">lock</span></button>}
+                          <button className="ibtn" title="Edit" onClick={(e) => { e.stopPropagation(); setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
+                          <button className="ibtn" title="Print" onClick={(e) => { e.stopPropagation(); printDocument(r.id, 'print'); }}><span className="material-symbols-rounded">print</span></button>
+                          <button className="ibtn" title="Download PDF" onClick={(e) => { e.stopPropagation(); printDocument(r.id, 'download'); }}><span className="material-symbols-rounded">download</span></button>
+                          {r.status === 'DRAFT' && <button className="ibtn danger" title="Delete" onClick={(e) => { e.stopPropagation(); setDeleteTarget(r); }}><span className="material-symbols-rounded">delete</span></button>}
+                        </td>
+                      </tr>
+                      {expandedId === r.id && (
+                        <tr key={`${r.id}-acts`}>
+                          <td colSpan={8}>
+                            <div style={{ background: 'var(--card-bg, #f9fafb)', padding: 12, borderBottom: '1px solid var(--border)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                <h4 style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>Activities</h4>
+                                <button className="btn btn-sm" onClick={() => { setActForm({}); setEditActId(null); }}>+ Add Activity</button>
+                              </div>
+                              {loadingActs ? <div className="empty">Loading...</div> : activities.length === 0 ? <div className="empty">No activities.</div> : (
+                                <table className="tbl">
+                                  <thead><tr><th>Type</th><th>Start</th><th>End</th><th>Duration (min)</th><th>Qty</th><th>Remarks</th><th>Actions</th></tr></thead>
+                                  <tbody>
+                                    {activities.map((a) => (
+                                      <tr key={a.id}>
+                                        <td>{a.activityType}</td>
+                                        <td>{a.startTime ? new Date(a.startTime).toLocaleTimeString() : '-'}</td>
+                                        <td>{a.endTime ? new Date(a.endTime).toLocaleTimeString() : '-'}</td>
+                                        <td>{a.duration ?? '-'}</td>
+                                        <td>{a.quantity ?? '-'}</td>
+                                        <td>{a.remarks ?? '-'}</td>
+                                        <td>
+                                          <button className="ibtn" title="Edit" onClick={() => { setActForm(a as unknown as Record<string, unknown>); setEditActId(a.id); }}><span className="material-symbols-rounded">edit</span></button>
+                                          <button className="ibtn danger" title="Delete" onClick={() => setDeleteActTarget(a)}><span className="material-symbols-rounded">delete</span></button>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {expandedId && (
+        <div className="panel">
+          <div className="panel-h"><h2>{editActId ? 'Edit' : 'Add'} Activity</h2></div>
+          <div className="fgrid">
+            <label className="fld"><span>Activity Type *</span>
+              <select className="in" value={String(actForm.activityType ?? 'PRODUCTION')} onChange={(e) => setAct('activityType', e.target.value)}>
+                {ACT_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+              </select>
+            </label>
+            <label className="fld"><span>Start Time</span><input className="in" type="datetime-local" value={String(actForm.startTime ?? '').slice(0, 16)} onChange={(e) => setAct('startTime', e.target.value)} /></label>
+            <label className="fld"><span>End Time</span><input className="in" type="datetime-local" value={String(actForm.endTime ?? '').slice(0, 16)} onChange={(e) => setAct('endTime', e.target.value)} /></label>
+            <label className="fld"><span>Quantity</span><input className="in" type="number" value={String(actForm.quantity ?? '')} onChange={(e) => setAct('quantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Remarks</span><input className="in" value={String(actForm.remarks ?? '')} onChange={(e) => setAct('remarks', e.target.value)} /></label>
+          </div>
+          <div className="actbar">
+            <span className="lft">{editActId && <button className="btn" onClick={() => { setActForm({}); setEditActId(null); }} disabled={busy}>Cancel</button>}</span>
+            <button className="btn btn-p" onClick={saveAct} disabled={busy}>{editActId ? 'Update' : 'Add'}</button>
+          </div>
+        </div>
+      )}
+
+      <ConfirmActionModal open={Boolean(deleteTarget)} title={`Delete ${deleteTarget?.logNumber ?? ''}`} body="Permanently delete?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteTarget(null)} onConfirm={del} />
+      <ConfirmActionModal open={Boolean(deleteActTarget)} title="Delete Activity" body="Permanently delete?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteActTarget(null)} onConfirm={delAct} />
+    </>
+  );
+}

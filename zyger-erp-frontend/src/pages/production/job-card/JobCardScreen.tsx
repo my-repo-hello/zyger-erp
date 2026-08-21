@@ -1,0 +1,495 @@
+import { useEffect, useState } from 'react';
+import apiClient from '../../../api/axiosClient';
+import { useToast } from '../../../contexts/ToastContext';
+import { getApiErrorMessage } from '../../../utils/apiError';
+import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import { printDocument as printDoc } from '../../../utils/printDocument';
+
+interface JobCard {
+  id: number;
+  jobCardNumber: string;
+  workOrderNumber: string;
+  partCode: string;
+  partDescription: string;
+  revision: string;
+  plannedQuantity: number;
+  completedQuantity: number;
+  reworkQuantity: number;
+  rejectedQuantity: number;
+  scrapQuantity: number;
+  priority: string;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  actualStartDate: string;
+  actualEndDate: string;
+  routeSheetNumber: string;
+  bomNumber: string;
+  customerCode: string;
+  status: string;
+  completionStatus: string;
+  releaseRemarks: string;
+  completeRemarks: string;
+  holdReason: string;
+  remarks: string;
+  subjobs?: Subjob[];
+}
+
+interface Subjob {
+  id: number;
+  subjobNumber: string;
+  operationCode: string;
+  operationDescription: string;
+  sequenceNo: number;
+  machineCode: string;
+  workCenterCode: string;
+  operatorCode: string;
+  plannedQuantity: number;
+  completedQuantity: number;
+  reworkQuantity: number;
+  rejectedQuantity: number;
+  scrapQuantity: number;
+  startTime: string;
+  endTime: string;
+  status: string;
+  inspectionRequired: boolean;
+  remarks: string;
+}
+
+interface CompletionCheck {
+  jobCardNumber: string;
+  canComplete: boolean;
+  checks: { check: string; passed: boolean; detail: string }[];
+}
+
+const SC: Record<string, { color: string; bg: string }> = {
+  DRAFT: { color: '#888', bg: '#e9ecef' }, RELEASED: { color: '#2563eb', bg: '#dbeafe' },
+  IN_PROGRESS: { color: '#f59e0b', bg: '#fef3c7' }, ON_HOLD: { color: '#ef4444', bg: '#f8d7da' },
+  COMPLETED: { color: '#22c55e', bg: '#d4edda' }, CLOSED: { color: '#6b7280', bg: '#f3f4f6' },
+  CANCELLED: { color: '#991b1b', bg: '#fde2e2' }, PENDING: { color: '#888', bg: '#e9ecef' },
+  QUALITY_HOLD: { color: '#7c3aed', bg: '#ede9fe' },
+};
+
+export default function JobCardScreen() {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<JobCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<Record<string, unknown>>({});
+  const [editId, setEditId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<JobCard | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState('');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [subjobs, setSubjobs] = useState<Subjob[]>([]);
+  const [loadingSubs, setLoadingSubs] = useState(false);
+  const [subForm, setSubForm] = useState<Record<string, unknown>>({});
+  const [editSubId, setEditSubId] = useState<number | null>(null);
+  const [deleteSubTarget, setDeleteSubTarget] = useState<Subjob | null>(null);
+  const [tab, setTab] = useState<'list' | 'form' | 'from-wo'>('list');
+  const [woNumber, setWoNumber] = useState('');
+  const [compCheck, setCompCheck] = useState<CompletionCheck | null>(null);
+  const [showCompCheck, setShowCompCheck] = useState(false);
+  const [actionNote, setActionNote] = useState('');
+  const [actionTarget, setActionTarget] = useState<{ id: number; action: string } | null>(null);
+  const [openActionMenu, setOpenActionMenu] = useState<number | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await apiClient.get('/v1/production/job-cards');
+      setRows(Array.isArray(data) ? data : data.content ?? []);
+    } catch (e) { toast(getApiErrorMessage(e, 'Load failed.'), 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    if (!String(form.partCode ?? '').trim()) { toast('Part Code is required.', 'error'); return; }
+    if (!form.plannedQuantity) { toast('Planned Quantity is required.', 'error'); return; }
+    setBusy(true);
+    try {
+      if (editId) {
+        await apiClient.put(`/v1/production/job-cards/${editId}`, form);
+        toast('Job Card updated.');
+      } else {
+        await apiClient.post('/v1/production/job-cards', form);
+        toast('Job Card created.');
+      }
+      setForm({}); setEditId(null); setTab('list'); load();
+    } catch (e) { toast(getApiErrorMessage(e, 'Save failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const createFromWO = async () => {
+    if (!woNumber.trim()) { toast('Work Order Number is required.', 'error'); return; }
+    setBusy(true);
+    try {
+      const { data } = await apiClient.post('/v1/production/job-cards/from-work-order', { workOrderNumber: woNumber });
+      if (data.success === false) {
+        toast(data.errors?.join(', ') || 'Failed to create from Work Order.', 'error');
+      } else {
+        toast(`Job Card ${data.jobCardNumber || data.jobCard?.jobCardNumber} created from Work Order.`);
+        setWoNumber(''); setTab('list'); load();
+      }
+    } catch (e) { toast(getApiErrorMessage(e, 'Create from WO failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const del = async () => {
+    if (!deleteTarget) return;
+    setBusy(true);
+    try {
+      await apiClient.delete(`/v1/production/job-cards/${deleteTarget.id}`);
+      toast('Job Card deleted.'); setDeleteTarget(null); load();
+    } catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const action = async (id: number, act: string, note?: string) => {
+    setBusy(true);
+    try {
+      const { data } = await apiClient.post(`/v1/production/job-cards/${id}/actions/${act}`, note ? { note } : undefined);
+      if (data.success === false) {
+        toast(data.errors?.join('\n') || 'Action failed.', 'error');
+      } else {
+        toast(`Job Card ${act}.`);
+        load();
+        if (expandedId) loadSubjobs(id);
+      }
+    } catch (e) { toast(getApiErrorMessage(e, 'Action failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const loadCompCheck = async (id: number) => {
+    try {
+      const { data } = await apiClient.get(`/v1/production/job-cards/${id}/completion-check`);
+      setCompCheck(data);
+      setShowCompCheck(true);
+    } catch (e) { toast(getApiErrorMessage(e, 'Completion check failed.'), 'error'); }
+  };
+
+  const loadSubjobs = async (id: number) => {
+    if (expandedId === id) { setExpandedId(null); setSubjobs([]); return; }
+    setExpandedId(id);
+    setLoadingSubs(true);
+    try {
+      const { data } = await apiClient.get(`/v1/production/job-cards/${id}/subjobs`);
+      setSubjobs(Array.isArray(data) ? data : data.content ?? []);
+    } catch (e) { toast(getApiErrorMessage(e, 'Failed to load subjobs.'), 'error'); setSubjobs([]); }
+    setLoadingSubs(false);
+  };
+
+  const saveSub = async () => {
+    if (!expandedId) return;
+    if (!String(subForm.operationCode ?? '').trim()) { toast('Operation Code is required.', 'error'); return; }
+    setBusy(true);
+    try {
+      if (editSubId) {
+        await apiClient.put(`/v1/production/job-cards/subjobs/${editSubId}`, subForm);
+        toast('Subjob updated.');
+      } else {
+        await apiClient.post(`/v1/production/job-cards/${expandedId}/subjobs`, subForm);
+        toast('Subjob added.');
+      }
+      setSubForm({}); setEditSubId(null); loadSubjobs(expandedId);
+    } catch (e) { toast(getApiErrorMessage(e, 'Save failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const delSub = async () => {
+    if (!deleteSubTarget) return;
+    setBusy(true);
+    try {
+      await apiClient.delete(`/v1/production/job-cards/subjobs/${deleteSubTarget.id}`);
+      toast('Subjob deleted.'); setDeleteSubTarget(null);
+      if (expandedId) loadSubjobs(expandedId);
+    } catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const subAction = async (lineId: number, act: string) => {
+    try {
+      await apiClient.post(`/v1/production/job-cards/subjobs/${lineId}/actions/${act}`);
+      toast(`Subjob ${act}.`); if (expandedId) loadSubjobs(expandedId);
+    } catch (e) { toast(getApiErrorMessage(e, 'Action failed.'), 'error'); }
+  };
+
+  const set = (k: string, v: unknown) => setForm((c) => ({ ...c, [k]: v }));
+  const setSub = (k: string, v: unknown) => setSubForm((c) => ({ ...c, [k]: v }));
+
+  const printDocument = (id: number | string, mode: 'print' | 'download' = 'print') => {
+    const base = import.meta.env.VITE_API_BASE_URL || '/api';
+    printDoc(`${base}/v1/production/job-cards/${id}/print?download=${mode === 'download'}`, mode);
+  };
+
+  const filtered = rows.filter((r) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (r.jobCardNumber ?? '').toLowerCase().includes(q) || (r.partCode ?? '').toLowerCase().includes(q) || (r.workOrderNumber ?? '').toLowerCase().includes(q);
+  });
+
+  return (
+    <>
+      <div className="pg-head"><h1>Job Card</h1><p>Shop floor execution - Job entry, subjobs & completion</p></div>
+
+      {/* ========= CREATE FROM WORK ORDER ========= */}
+      {tab === 'from-wo' && (
+        <div className="panel">
+          <div className="panel-h"><h2>Create Job Card from Work Order</h2></div>
+          <p style={{ fontSize: 13, color: 'var(--muted)', margin: '0 0 16px' }}>
+            Enter an approved Work Order number. The system will auto-populate part details, BOM, Route Sheet, and create subjobs from route operations.
+          </p>
+          <div className="fgrid" style={{ gridTemplateColumns: '1fr auto' }}>
+            <label className="fld"><span>Work Order Number *</span>
+              <input className="in" placeholder="e.g. WO-2026-0001" value={woNumber} onChange={(e) => setWoNumber(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') createFromWO(); }} autoFocus />
+            </label>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+              <button className="btn btn-p" onClick={createFromWO} disabled={busy || !woNumber.trim()}>
+                <span className="material-symbols-rounded" style={{ fontSize: 18 }}>add_task</span> Create Job Card
+              </button>
+            </div>
+          </div>
+          <div className="actbar"><button className="btn" onClick={() => setTab('list')}>Back to List</button></div>
+        </div>
+      )}
+
+      {/* ========= MANUAL FORM ========= */}
+      {tab === 'form' && (
+        <div className="panel">
+          <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Job Card</h2></div>
+          <div className="fgrid">
+            <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
+            <label className="fld"><span>Part Code *</span><input className="in" value={String(form.partCode ?? '')} onChange={(e) => set('partCode', e.target.value)} /></label>
+            <label className="fld"><span>Part Description</span><input className="in" value={String(form.partDescription ?? '')} onChange={(e) => set('partDescription', e.target.value)} /></label>
+            <label className="fld"><span>Revision</span><input className="in" value={String(form.revision ?? '')} onChange={(e) => set('revision', e.target.value)} /></label>
+            <label className="fld"><span>Planned Qty *</span><input className="in" type="number" value={String(form.plannedQuantity ?? '')} onChange={(e) => set('plannedQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Priority</span>
+              <select className="in" value={String(form.priority ?? 'MEDIUM')} onChange={(e) => set('priority', e.target.value)}>
+                <option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="HIGH">High</option><option value="URGENT">Urgent</option>
+              </select>
+            </label>
+            <label className="fld"><span>Planned Start Date</span><input className="in" type="date" value={String(form.plannedStartDate ?? '').slice(0, 10)} onChange={(e) => set('plannedStartDate', e.target.value)} /></label>
+            <label className="fld"><span>Planned End Date</span><input className="in" type="date" value={String(form.plannedEndDate ?? '').slice(0, 10)} onChange={(e) => set('plannedEndDate', e.target.value)} /></label>
+            <label className="fld"><span>Route Sheet No</span><input className="in" value={String(form.routeSheetNumber ?? '')} onChange={(e) => set('routeSheetNumber', e.target.value)} /></label>
+            <label className="fld"><span>Production BOM No</span><input className="in" value={String(form.bomNumber ?? '')} onChange={(e) => set('bomNumber', e.target.value)} /></label>
+            <label className="fld"><span>Customer Code</span><input className="in" value={String(form.customerCode ?? '')} onChange={(e) => set('customerCode', e.target.value)} /></label>
+            <label className="fld"><span>Remarks</span><input className="in" value={String(form.remarks ?? '')} onChange={(e) => set('remarks', e.target.value)} /></label>
+          </div>
+          <div className="actbar">
+            <span className="lft">{editId && <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }} disabled={busy}>Cancel</button>}</span>
+            <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }}>Back</button>
+            <button className="btn btn-p" onClick={save} disabled={busy}>{editId ? 'Update' : 'Create'}</button>
+          </div>
+        </div>
+      )}
+
+      {/* ========= LIST ========= */}
+      {tab === 'list' && (
+        <div className="panel">
+          <div className="toolbar">
+            <input className="in" placeholder="Search job cards..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-p" onClick={() => setTab('from-wo')}>
+                <span className="material-symbols-rounded" style={{ fontSize: 18 }}>add_task</span> Create from WO
+              </button>
+              <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ Manual</button>
+            </div>
+          </div>
+          <div className="twrap">
+            {loading ? (
+              <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading...</div>
+            ) : (
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th style={{ width: 40 }}></th>
+                    <th>Job Card No</th>
+                    <th>Work Order</th>
+                    <th>Part Code</th>
+                    <th>Planned</th>
+                    <th>Completed</th>
+                    <th>Rework</th>
+                    <th>Scrap</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr><td colSpan={11}><div className="empty"><span className="material-symbols-rounded">description</span> No job cards.</div></td></tr>
+                  ) : filtered.map((r) => (
+                    <>
+                      <tr key={r.id} onClick={() => loadSubjobs(r.id)} style={{ cursor: 'pointer' }}>
+                        <td><span className="material-symbols-rounded">{expandedId === r.id ? 'expand_less' : 'expand_more'}</span></td>
+                        <td><b>{r.jobCardNumber}</b></td>
+                        <td>{r.workOrderNumber ?? '-'}</td>
+                        <td>{r.partCode}</td>
+                        <td>{r.plannedQuantity}</td>
+                        <td style={{ color: '#22c55e', fontWeight: 600 }}>{r.completedQuantity}</td>
+                        <td style={{ color: r.reworkQuantity > 0 ? '#f59e0b' : undefined }}>{r.reworkQuantity}</td>
+                        <td style={{ color: r.scrapQuantity > 0 ? '#ef4444' : undefined }}>{r.scrapQuantity}</td>
+                        <td>{r.priority ?? '-'}</td>
+                        <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                        <td style={{ position: 'relative' }}>
+                          <button className="ibtn" title="Actions" onClick={(e) => { e.stopPropagation(); setOpenActionMenu(openActionMenu === r.id ? null : r.id); }}>
+                            <span className="material-symbols-rounded">more_vert</span>
+                          </button>
+                          {openActionMenu === r.id && (
+                            <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 20, background: 'var(--card-bg, #fff)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: 180, padding: '4px 0' }} onClick={(e) => e.stopPropagation()}>
+                              {r.status === 'DRAFT' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'release'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>play_arrow</span> Release Job</button>}
+                              {r.status === 'RELEASED' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'start'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#f59e0b' }}>play_circle</span> Start Production</button>}
+                              {(r.status === 'RELEASED' || r.status === 'IN_PROGRESS') && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); setActionTarget({ id: r.id, action: 'hold' }); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#ef4444' }}>pause</span> Hold</button>}
+                              {r.status === 'IN_PROGRESS' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); loadCompCheck(r.id); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#22c55e' }}>check_circle</span> Complete</button>}
+                              {r.status === 'ON_HOLD' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'resume'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>play_circle</span> Resume</button>}
+                              {r.status === 'COMPLETED' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'close'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#6b7280' }}>lock</span> Close Job</button>}
+                              <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0' }} />
+                              <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); printDocument(r.id, 'print'); }}><span className="material-symbols-rounded" style={{ fontSize: 18 }}>print</span> Print</button>
+                              <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); printDocument(r.id, 'download'); }}><span className="material-symbols-rounded" style={{ fontSize: 18 }}>download</span> Download PDF</button>
+                              <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded" style={{ fontSize: 18 }}>edit</span> Edit</button>
+                              {r.status === 'DRAFT' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left', color: '#ef4444' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(239,68,68,0.08)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); setDeleteTarget(r); }}><span className="material-symbols-rounded" style={{ fontSize: 18 }}>delete</span> Delete</button>}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                      {expandedId === r.id && (
+                        <tr key={`${r.id}-subs`}>
+                          <td colSpan={11}>
+                            <div style={{ background: 'var(--card-bg, #f9fafb)', padding: 12, borderBottom: '1px solid var(--border)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+                                <h4 style={{ margin: 0, fontSize: 13, color: 'var(--muted)' }}>Subjobs / Operations ({subjobs.length})</h4>
+                                {(r.status === 'DRAFT' || r.status === 'RELEASED') && (
+                                  <button className="btn btn-sm" onClick={() => { setSubForm({}); setEditSubId(null); }}>+ Add Subjob</button>
+                                )}
+                              </div>
+                              {loadingSubs ? <div className="empty">Loading...</div> : subjobs.length === 0 ? <div className="empty">No subjobs. Add operations or create from Work Order.</div> : (
+                                <table className="tbl">
+                                  <thead><tr><th>Seq</th><th>Subjob No</th><th>Operation</th><th>Machine</th><th>Work Center</th><th>Operator</th><th>Planned</th><th>Completed</th><th>Rework</th><th>Reject</th><th>Scrap</th><th>Status</th><th>Actions</th></tr></thead>
+                                  <tbody>
+                                    {subjobs.map((s) => (
+                                      <tr key={s.id}>
+                                        <td>{s.sequenceNo}</td>
+                                        <td><b>{s.subjobNumber}</b></td>
+                                        <td>{s.operationCode} - {s.operationDescription ?? ''}</td>
+                                        <td>{s.machineCode ?? '-'}</td>
+                                        <td>{s.workCenterCode ?? '-'}</td>
+                                        <td>{s.operatorCode ?? '-'}</td>
+                                        <td>{s.plannedQuantity}</td>
+                                        <td style={{ color: '#22c55e', fontWeight: 600 }}>{s.completedQuantity}</td>
+                                        <td style={{ color: s.reworkQuantity > 0 ? '#f59e0b' : undefined }}>{s.reworkQuantity}</td>
+                                        <td style={{ color: s.rejectedQuantity > 0 ? '#ef4444' : undefined }}>{s.rejectedQuantity}</td>
+                                        <td style={{ color: s.scrapQuantity > 0 ? '#ef4444' : undefined }}>{s.scrapQuantity}</td>
+                                        <td><span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, color: (SC[s.status] ?? SC.PENDING).color, background: (SC[s.status] ?? SC.PENDING).bg }}>{s.status?.replace('_', ' ')}</span></td>
+                                        <td>
+                                          {s.status === 'PENDING' && <button className="ibtn" title="Release" onClick={() => subAction(s.id, 'release')}><span className="material-symbols-rounded">play_arrow</span></button>}
+                                          {s.status === 'RELEASED' && <button className="ibtn" title="Start" onClick={() => subAction(s.id, 'start')}><span className="material-symbols-rounded">play_circle</span></button>}
+                                          {s.status === 'IN_PROGRESS' && <>
+                                            <button className="ibtn" title="Quality Hold" onClick={() => subAction(s.id, 'quality-hold')}><span className="material-symbols-rounded">pause_circle</span></button>
+                                            <button className="ibtn" title="Complete" onClick={() => subAction(s.id, 'complete')}><span className="material-symbols-rounded">check_circle</span></button>
+                                          </>}
+                                          {(s.status === 'ON_HOLD' || s.status === 'QUALITY_HOLD') && <button className="ibtn" title="Resume" onClick={() => subAction(s.id, 'resume')}><span className="material-symbols-rounded">play_circle</span></button>}
+                                          <button className="ibtn" title="Edit" onClick={() => { setSubForm(s as unknown as Record<string, unknown>); setEditSubId(s.id); }}><span className="material-symbols-rounded">edit</span></button>
+                                          {(s.status === 'PENDING' || s.status === 'RELEASED') && <button className="ibtn danger" title="Delete" onClick={() => setDeleteSubTarget(s)}><span className="material-symbols-rounded">delete</span></button>}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========= SUBJOB FORM ========= */}
+      {expandedId && (
+        <div className="panel">
+          <div className="panel-h"><h2>{editSubId ? 'Edit' : 'Add'} Subjob</h2></div>
+          <div className="fgrid">
+            <label className="fld"><span>Sequence No</span><input className="in" type="number" value={String(subForm.sequenceNo ?? '')} onChange={(e) => setSub('sequenceNo', Number(e.target.value))} /></label>
+            <label className="fld"><span>Operation Code *</span><input className="in" value={String(subForm.operationCode ?? '')} onChange={(e) => setSub('operationCode', e.target.value)} /></label>
+            <label className="fld"><span>Description</span><input className="in" value={String(subForm.operationDescription ?? '')} onChange={(e) => setSub('operationDescription', e.target.value)} /></label>
+            <label className="fld"><span>Machine Code</span><input className="in" value={String(subForm.machineCode ?? '')} onChange={(e) => setSub('machineCode', e.target.value)} /></label>
+            <label className="fld"><span>Work Center</span><input className="in" value={String(subForm.workCenterCode ?? '')} onChange={(e) => setSub('workCenterCode', e.target.value)} /></label>
+            <label className="fld"><span>Operator</span><input className="in" value={String(subForm.operatorCode ?? '')} onChange={(e) => setSub('operatorCode', e.target.value)} /></label>
+            <label className="fld"><span>Planned Qty</span><input className="in" type="number" value={String(subForm.plannedQuantity ?? '')} onChange={(e) => setSub('plannedQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Completed Qty</span><input className="in" type="number" value={String(subForm.completedQuantity ?? '')} onChange={(e) => setSub('completedQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Rework Qty</span><input className="in" type="number" value={String(subForm.reworkQuantity ?? '')} onChange={(e) => setSub('reworkQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Rejected Qty</span><input className="in" type="number" value={String(subForm.rejectedQuantity ?? '')} onChange={(e) => setSub('rejectedQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Scrap Qty</span><input className="in" type="number" value={String(subForm.scrapQuantity ?? '')} onChange={(e) => setSub('scrapQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Inspection Required</span>
+              <select className="in" value={String(subForm.inspectionRequired ?? 'false')} onChange={(e) => setSub('inspectionRequired', e.target.value === 'true')}>
+                <option value="false">No</option><option value="true">Yes</option>
+              </select>
+            </label>
+            <label className="fld"><span>Remarks</span><input className="in" value={String(subForm.remarks ?? '')} onChange={(e) => setSub('remarks', e.target.value)} /></label>
+          </div>
+          <div className="actbar">
+            <span className="lft">{editSubId && <button className="btn" onClick={() => { setSubForm({}); setEditSubId(null); }} disabled={busy}>Cancel</button>}</span>
+            <button className="btn btn-p" onClick={saveSub} disabled={busy}>{editSubId ? 'Update' : 'Add'}</button>
+          </div>
+        </div>
+      )}
+
+      {/* ========= COMPLETION CHECK MODAL ========= */}
+      {showCompCheck && compCheck && (
+        <div className="search-pop" onClick={() => setShowCompCheck(false)}>
+          <div className="search-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h3 style={{ margin: 0 }}>Completion Check - {compCheck.jobCardNumber}</h3>
+              <button className="btn btn-sm" onClick={() => setShowCompCheck(false)}>X</button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
+              {compCheck.checks.map((c, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: c.passed ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)' }}>
+                  <span className="material-symbols-rounded" style={{ color: c.passed ? '#22c55e' : '#ef4444', fontSize: 20 }}>{c.passed ? 'check_circle' : 'error'}</span>
+                  <div style={{ flex: 1 }}><b style={{ fontSize: 13 }}>{c.check}</b><div style={{ fontSize: 12, color: 'var(--muted)' }}>{c.detail}</div></div>
+                </div>
+              ))}
+            </div>
+            {compCheck.canComplete ? (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button className="btn btn-p" onClick={() => { setShowCompCheck(false); setActionTarget({ id: expandedId!, action: 'complete' }); }}>
+                  <span className="material-symbols-rounded" style={{ fontSize: 18 }}>check_circle</span> Complete Job Card
+                </button>
+              </div>
+            ) : (
+              <div style={{ padding: 12, background: 'rgba(239,68,68,0.08)', borderRadius: 8, fontSize: 13, color: '#ef4444' }}>
+                Cannot complete - fix the issues above first.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========= ACTION NOTE MODAL ========= */}
+      {actionTarget && (
+        <div className="search-pop" onClick={() => setActionTarget(null)}>
+          <div className="search-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <h3 style={{ margin: '0 0 12px' }}>{actionTarget.action.charAt(0).toUpperCase() + actionTarget.action.slice(1)} Job Card</h3>
+            <label className="fld"><span>Note (optional)</span>
+              <input className="in" value={actionNote} onChange={(e) => setActionNote(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { action(actionTarget.id, actionTarget.action, actionNote); setActionTarget(null); setActionNote(''); } }} autoFocus />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+              <button className="btn" onClick={() => { setActionTarget(null); setActionNote(''); }}>Cancel</button>
+              <button className="btn btn-p" onClick={() => { action(actionTarget.id, actionTarget.action, actionNote); setActionTarget(null); setActionNote(''); }} disabled={busy}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmActionModal open={Boolean(deleteTarget)} title={`Delete ${deleteTarget?.jobCardNumber ?? ''}`} body="Permanently delete this job card?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteTarget(null)} onConfirm={del} />
+      <ConfirmActionModal open={Boolean(deleteSubTarget)} title="Delete Subjob" body="Permanently delete this subjob?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteSubTarget(null)} onConfirm={delSub} />
+    </>
+  );
+}

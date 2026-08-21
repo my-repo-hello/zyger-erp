@@ -1,0 +1,1000 @@
+package in.zygertechnology.zygererp.controller;
+
+import in.zygertechnology.zygererp.service.DocNumberService;
+import in.zygertechnology.zygererp.entity.*;
+import in.zygertechnology.zygererp.repo.*;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import java.security.Principal;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.security.Principal;
+import java.util.*;
+import java.util.stream.Stream;
+
+@RestController @RequiredArgsConstructor
+public class MasterController {
+    private final ItemRepository items;
+    private final PartyRepository parties;
+    private final LocationRepository locs;
+    private final RefDocRepository refs;
+    private final WorkCenterRepository workCenters;
+    private final MachineMasterRepository machines;
+    private final OperationMasterRepository operations;
+    private final ShiftCalendarRepository shifts;
+    private final DocNumberService docNumbers;
+    private final ItemBomComponentRepository bomRepo;
+    private final ItemSupplierRepository itemSupplierRepo;
+
+
+    private String principalName(Principal p) { return p != null ? p.getName() : "system"; }
+
+    private static final ObjectMapper _mapper = new ObjectMapper();
+
+    @SuppressWarnings("unchecked")
+    private <T> T mergePatch(T existing, ObjectNode incoming) {
+        try {
+            ObjectNode tree = (ObjectNode) _mapper.valueToTree(existing);
+            for (var entry : incoming.properties()) {
+                String key = entry.getKey();
+                if (!"id".equals(key) && !"version".equals(key) && !"class".equals(key)) {
+                    tree.set(key, entry.getValue());
+                }
+            }
+            return (T) _mapper.treeToValue(tree, existing.getClass());
+        } catch (Exception ex) {
+            throw new RuntimeException("Merge failed", ex);
+        }
+    }
+
+    @GetMapping("/api/master/parties/next-code")
+    Map<String,String> nextPartyCode(@RequestParam(defaultValue="CUSTOMER") String kind) {
+        String docType = switch (kind) {
+            case "SUPPLIER" -> "supplier";
+            case "SUBCONTRACTOR" -> "subcontractor";
+            default -> "customer";
+        };
+        return Map.of("code", docNumbers.next(docType));
+    }
+
+    @GetMapping("/api/master/uoms/next-code")
+    Map<String,String> nextUomCode() { return Map.of("code", docNumbers.next("uom")); }
+
+    @GetMapping("/api/master/item-groups/next-code")
+    Map<String,String> nextItemGroupCode() { return Map.of("code", docNumbers.next("item-group")); }
+
+    @GetMapping("/api/master/processes/next-code")
+    Map<String,String> nextProcessCode() { return Map.of("code", docNumbers.next("process")); }
+
+    @GetMapping("/api/master/items/next-code")
+    Map<String,String> nextItemCode(@RequestParam(defaultValue="PURCHASABLE") String itemType) {
+        String docType = switch (itemType.toUpperCase()) {
+            case "CUSTOMER_SUPPLIED" -> "item-customer";
+            case "MANUFACTURING" -> "item-manufacturing";
+            default -> "item-purchasable";
+        };
+        return Map.of("code", docNumbers.next(docType));
+    }
+
+    @GetMapping("/api/master/process-groups/next-code")
+
+    Map<String,String> nextProcessGroupCode() { return Map.of("code", docNumbers.next("process-group")); }
+
+    @GetMapping("/api/master/machines/next-code")
+    Map<String,String> nextMachineCode() { return Map.of("code", docNumbers.next("machine")); }
+
+    @GetMapping("/api/master/instruments/next-code")
+    Map<String,String> nextInstrumentCode() { return Map.of("code", docNumbers.next("instrument")); }
+
+    @GetMapping("/api/master/tools/next-code")
+    Map<String,String> nextToolCode() { return Map.of("code", docNumbers.next("tool")); }
+
+    @GetMapping("/api/master/work-centers/next-code")
+    Map<String,String> nextWorkCenterCode() { return Map.of("code", docNumbers.next("work-center")); }
+
+    @GetMapping("/api/master/operations/next-code")
+    Map<String,String> nextOperationCode() { return Map.of("code", docNumbers.next("operation")); }
+
+    @GetMapping("/api/master/locations/next-code")
+    Map<String,String> nextLocationCode() { return Map.of("code", docNumbers.next("location")); }
+
+    @GetMapping("/api/master/items")
+    @Transactional(readOnly = true)
+    public Map<String,Object> itemPage(@RequestParam(defaultValue="0") int page,
+                                       @RequestParam(defaultValue="200") int size,
+                                       @RequestParam(required=false) String search,
+                                       @RequestParam(required=false) String category,
+                                       @RequestParam(required=false) String itemType,
+                                       @RequestParam(required=false) String active) {
+        List<ItemMaster> all = new ArrayList<>(items.findAll());
+        if (search != null && !search.isEmpty()) {
+            String s = search.toLowerCase();
+            all.removeIf(i -> {
+                String haystack = Stream.of(i.getCode(), i.getDescription())
+                    .filter(Objects::nonNull).collect(java.util.stream.Collectors.joining()).toLowerCase();
+                return !haystack.contains(s);
+            });
+        }
+        if (category != null && !category.isEmpty())
+            all.removeIf(i -> !category.equals(i.getCategory()));
+        if (itemType != null && !itemType.isEmpty())
+            all.removeIf(i -> !itemType.equals(i.getItemType()));
+        if (active != null && !active.isEmpty())
+            all.removeIf(i -> !String.valueOf(i.isActive()).equals(active));
+        all.sort(Comparator.comparing(ItemMaster::getCode));
+        int total = all.size(), pages = Math.max(1, (int)Math.ceil((double)total/size));
+        int from = Math.min(page*size, total), to = Math.min(from+size, total);
+        Map<String,Object> out = new LinkedHashMap<>();
+        out.put("content", all.subList(from, to).stream().map(this::itemToMap).toList());
+        out.put("totalElements", total); out.put("totalPages", pages);
+        out.put("number", page); out.put("size", size);
+        return out;
+    }
+
+    @PostMapping("/api/master/items") @Transactional ItemMaster create(@RequestBody Map<String,Object> body){
+        ItemMaster i = new ItemMaster();
+        applyItemFields(i, body);
+        i.setId(null);
+        return items.save(i);
+    }
+    @GetMapping("/api/master/items/{id}") ItemMaster getItem(@PathVariable Long id) {
+        return items.findById(id).orElseThrow(() -> new RuntimeException("Item not found"));
+    }
+    @PutMapping("/api/master/items/{id}") @Transactional ItemMaster update(@PathVariable Long id, @RequestBody Map<String,Object> body){
+        ItemMaster e = items.findById(id).orElseThrow(() -> new RuntimeException("Item not found"));
+        applyItemFields(e, body);
+        e.setId(id); e.setCode(e.getCode());
+        return items.save(e);
+    }
+
+    private static final java.util.Set<String> KNOWN_ITEM_FIELDS = java.util.Set.of(
+        "id","code","description","uom","category","defaultRate","safetyStock",
+        "requiresBatch","requiresHeat","active","itemType","drawingNumber",
+        "drawingRevision","revision","leadTimeDays","minOrderQty","orderMultiple",
+        "shelfLifeDays","batchControl","serialControl","inspectionRequired",
+        "defaultWarehouse","itemGroupId","itemGroup","materialGrade","specification",
+        "productType","uomRefId","uomRef","drawingPath","dimensionType","hsCode",
+        "weight","weightUom","minStockLevel","maxStockLevel","reorderPoint",
+        "hsnCode","supplierLeadTime","avgDailyConsumption","storageCategory",
+        "barcode","alternateItems","substituteItems","parentItem","materialType",
+        "dimensions","tolerance","surfaceFinish","hardness","manufacturer",
+        "purchaseUom","conversionFactor","defaultReceivingStore","customerOwned",
+        "customerCode","version","createdBy","createdAt","updatedBy","updatedAt","extraData","reorderLevel"
+    );
+
+    private void applyItemFields(ItemMaster i, Map<String,Object> b) {
+        if (b.containsKey("code")) i.setCode((String) b.get("code"));
+        if (b.containsKey("description")) i.setDescription((String) b.get("description"));
+        if (b.containsKey("uom")) i.setUom((String) b.get("uom"));
+        if (b.containsKey("category")) i.setCategory((String) b.get("category"));
+        if (b.containsKey("defaultRate")) i.setDefaultRate(b.get("defaultRate") != null ? new java.math.BigDecimal(b.get("defaultRate").toString()) : null);
+        if (b.containsKey("safetyStock")) i.setSafetyStock(b.get("safetyStock") != null ? new java.math.BigDecimal(b.get("safetyStock").toString()) : null);
+        if (b.containsKey("requiresBatch")) i.setRequiresBatch(Boolean.TRUE.equals(b.get("requiresBatch")));
+        if (b.containsKey("requiresHeat")) i.setRequiresHeat(Boolean.TRUE.equals(b.get("requiresHeat")));
+        if (b.containsKey("active")) i.setActive(Boolean.TRUE.equals(b.get("active")));
+        if (b.containsKey("itemType")) i.setItemType((String) b.get("itemType"));
+        if (b.containsKey("drawingNumber")) i.setDrawingNumber((String) b.get("drawingNumber"));
+        if (b.containsKey("drawingRevision")) i.setDrawingRevision((String) b.get("drawingRevision"));
+        if (b.containsKey("revision")) i.setRevision((String) b.get("revision"));
+        if (b.containsKey("leadTimeDays")) i.setLeadTimeDays(b.get("leadTimeDays") != null ? Integer.valueOf(b.get("leadTimeDays").toString()) : null);
+        if (b.containsKey("minOrderQty")) i.setMinOrderQty(b.get("minOrderQty") != null ? new java.math.BigDecimal(b.get("minOrderQty").toString()) : null);
+        if (b.containsKey("orderMultiple")) i.setOrderMultiple(b.get("orderMultiple") != null ? new java.math.BigDecimal(b.get("orderMultiple").toString()) : null);
+        if (b.containsKey("shelfLifeDays")) i.setShelfLifeDays(b.get("shelfLifeDays") != null ? Integer.valueOf(b.get("shelfLifeDays").toString()) : null);
+        if (b.containsKey("batchControl")) i.setBatchControl(Boolean.TRUE.equals(b.get("batchControl")));
+        if (b.containsKey("serialControl")) i.setSerialControl(Boolean.TRUE.equals(b.get("serialControl")));
+        if (b.containsKey("inspectionRequired")) i.setInspectionRequired(Boolean.TRUE.equals(b.get("inspectionRequired")));
+        if (b.containsKey("defaultWarehouse")) i.setDefaultWarehouse((String) b.get("defaultWarehouse"));
+        if (b.containsKey("materialGrade")) i.setMaterialGrade((String) b.get("materialGrade"));
+        if (b.containsKey("specification")) i.setSpecification((String) b.get("specification"));
+        if (b.containsKey("productType")) i.setProductType((String) b.get("productType"));
+        if (b.containsKey("drawingPath")) i.setDrawingPath((String) b.get("drawingPath"));
+        if (b.containsKey("dimensionType")) i.setDimensionType((String) b.get("dimensionType"));
+        if (b.containsKey("hsCode")) i.setHsCode((String) b.get("hsCode"));
+        if (b.containsKey("weight")) i.setWeight(b.get("weight") != null ? new java.math.BigDecimal(b.get("weight").toString()) : null);
+        if (b.containsKey("weightUom")) i.setWeightUom((String) b.get("weightUom"));
+        if (b.containsKey("minStockLevel")) i.setMinStockLevel(b.get("minStockLevel") != null ? new java.math.BigDecimal(b.get("minStockLevel").toString()) : null);
+        if (b.containsKey("maxStockLevel")) i.setMaxStockLevel(b.get("maxStockLevel") != null ? new java.math.BigDecimal(b.get("maxStockLevel").toString()) : null);
+        if (b.containsKey("reorderPoint")) i.setReorderPoint(b.get("reorderPoint") != null ? new java.math.BigDecimal(b.get("reorderPoint").toString()) : null);
+        if (b.containsKey("hsnCode")) i.setHsnCode((String) b.get("hsnCode"));
+        if (b.containsKey("supplierLeadTime")) i.setSupplierLeadTime(b.get("supplierLeadTime") != null ? Integer.valueOf(b.get("supplierLeadTime").toString()) : null);
+        if (b.containsKey("avgDailyConsumption")) i.setAvgDailyConsumption(b.get("avgDailyConsumption") != null ? new java.math.BigDecimal(b.get("avgDailyConsumption").toString()) : null);
+        if (b.containsKey("storageCategory")) i.setStorageCategory((String) b.get("storageCategory"));
+        if (b.containsKey("barcode")) i.setBarcode((String) b.get("barcode"));
+        if (b.containsKey("alternateItems")) i.setAlternateItems((String) b.get("alternateItems"));
+        if (b.containsKey("substituteItems")) i.setSubstituteItems((String) b.get("substituteItems"));
+        if (b.containsKey("parentItem")) i.setParentItem((String) b.get("parentItem"));
+        if (b.containsKey("materialType")) i.setMaterialType((String) b.get("materialType"));
+        if (b.containsKey("dimensions")) i.setDimensions((String) b.get("dimensions"));
+        if (b.containsKey("tolerance")) i.setTolerance((String) b.get("tolerance"));
+        if (b.containsKey("surfaceFinish")) i.setSurfaceFinish((String) b.get("surfaceFinish"));
+        if (b.containsKey("hardness")) i.setHardness((String) b.get("hardness"));
+        if (b.containsKey("manufacturer")) i.setManufacturer((String) b.get("manufacturer"));
+        if (b.containsKey("purchaseUom")) i.setPurchaseUom((String) b.get("purchaseUom"));
+        if (b.containsKey("conversionFactor")) i.setConversionFactor(b.get("conversionFactor") != null ? new java.math.BigDecimal(b.get("conversionFactor").toString()) : null);
+        if (b.containsKey("defaultReceivingStore")) i.setDefaultReceivingStore((String) b.get("defaultReceivingStore"));
+        if (b.containsKey("customerOwned")) i.setCustomerOwned(Boolean.TRUE.equals(b.get("customerOwned")));
+        if (b.containsKey("customerCode")) i.setCustomerCode((String) b.get("customerCode"));
+        if (b.containsKey("reorderLevel")) i.setReorderPoint(b.get("reorderLevel") != null ? new java.math.BigDecimal(b.get("reorderLevel").toString()) : null);
+        if (b.containsKey("itemGroupId") && b.get("itemGroupId") != null) {
+            i.setItemGroup(itemGroups.findById(Long.valueOf(b.get("itemGroupId").toString())).orElse(null));
+        } else if (b.containsKey("itemGroup") && b.get("itemGroup") != null && b.get("itemGroup") instanceof String s && !s.isBlank()) {
+            i.setItemGroup(itemGroups.findByCode(s).orElse(null));
+        }
+        if (b.containsKey("uomRefId") && b.get("uomRefId") != null) {
+            i.setUomRef(uoms.findById(Long.valueOf(b.get("uomRefId").toString())).orElse(null));
+        } else if (b.containsKey("uomRef") && b.get("uomRef") != null && b.get("uomRef") instanceof String s && !s.isBlank()) {
+            i.setUomRef(uoms.findByCode(s).orElse(null));
+        }
+
+        Map<String,Object> extra = new LinkedHashMap<>();
+        if (i.getExtraData() != null && !i.getExtraData().isBlank()) {
+            try {
+                ObjectMapper om = new ObjectMapper();
+                @SuppressWarnings("unchecked")
+                Map<String,Object> existing = om.readValue(i.getExtraData(), Map.class);
+                extra.putAll(existing);
+            } catch (Exception ignored) {}
+        }
+        for (Map.Entry<String,Object> e : b.entrySet()) {
+            if (!KNOWN_ITEM_FIELDS.contains(e.getKey())) {
+                if (e.getValue() != null) {
+                    extra.put(e.getKey(), e.getValue());
+                } else {
+                    extra.remove(e.getKey());
+                }
+            }
+        }
+        if (!extra.isEmpty()) {
+            try {
+                ObjectMapper om = new ObjectMapper();
+                i.setExtraData(om.writeValueAsString(extra));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private Map<String,Object> itemToMap(ItemMaster i) {
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("id", i.getId()); m.put("code", i.getCode()); m.put("description", i.getDescription());
+        m.put("uom", i.getUom()); m.put("category", i.getCategory()); m.put("active", i.isActive());
+        m.put("itemType", i.getItemType()); m.put("drawingNumber", i.getDrawingNumber());
+        m.put("hsnCode", i.getHsnCode()); m.put("batchControl", i.getBatchControl());
+        m.put("inspectionRequired", i.getInspectionRequired()); m.put("reorderPoint", i.getReorderPoint());
+        m.put("minOrderQty", i.getMinOrderQty()); m.put("safetyStock", i.getSafetyStock());
+        m.put("itemGroup", i.getItemGroup() != null ? i.getItemGroup().getCode() : null);
+        if (i.getExtraData() != null && !i.getExtraData().isBlank()) {
+            try {
+                ObjectMapper om = new ObjectMapper();
+                @SuppressWarnings("unchecked")
+                Map<String,Object> extra = om.readValue(i.getExtraData(), Map.class);
+                m.putAll(extra);
+            } catch (Exception ignored) {}
+        }
+        return m;
+    }
+    @DeleteMapping("/api/master/items/{id}") void del(@PathVariable Long id){ items.deleteById(id); }
+
+    @GetMapping("/api/master/items/{code}/bom")
+    public List<ItemBomComponent> getItemBom(@PathVariable String code) {
+        return bomRepo.findByParentItemCodeOrderByIdAsc(code);
+    }
+
+    @PostMapping("/api/master/items/{code}/bom")
+    @Transactional
+    public List<ItemBomComponent> saveItemBom(@PathVariable String code, @RequestBody List<ItemBomComponent> components) {
+        bomRepo.deleteByParentItemCode(code);
+        for (ItemBomComponent c : components) {
+            c.setId(null);
+            c.setParentItemCode(code);
+        }
+        return bomRepo.saveAll(components);
+    }
+
+    @GetMapping("/api/master/items/{code}/suppliers")
+    public List<ItemSupplier> getItemSuppliers(@PathVariable String code) {
+        return itemSupplierRepo.findByItemCodeOrderByIdAsc(code);
+    }
+
+    @PostMapping("/api/master/items/{code}/suppliers")
+    @Transactional
+    public List<ItemSupplier> saveItemSuppliers(@PathVariable String code, @RequestBody List<ItemSupplier> suppliers) {
+        itemSupplierRepo.deleteByItemCode(code);
+        for (ItemSupplier s : suppliers) {
+            s.setId(null);
+            s.setItemCode(code);
+        }
+        return itemSupplierRepo.saveAll(suppliers);
+    }
+
+
+    @GetMapping("/api/master/suppliers") List<Party> sup(){ return parties.findByKind("SUPPLIER"); }
+    @GetMapping("/api/master/customers") List<Party> cus(){ return parties.findByKind("CUSTOMER"); }
+
+    // ---- Party CRUD (suppliers & customers) ----
+    @GetMapping("/api/master/parties/{id}")
+    Party getParty(@PathVariable Long id) {
+        return parties.findById(id).orElseThrow(() -> new IllegalArgumentException("Party not found"));
+    }
+
+    @GetMapping("/api/master/parties") Map<String,Object> partyPage(
+            @RequestParam(defaultValue="0") int page,
+            @RequestParam(defaultValue="200") int size,
+            @RequestParam(required=false) String search,
+            @RequestParam(required=false) String kind) {
+        List<Party> all = new ArrayList<>();
+        if (kind != null && !kind.isEmpty()) {
+            all.addAll(parties.findByKind(kind));
+        } else {
+            all.addAll(parties.findAll());
+        }
+        if (search != null && !search.isEmpty()) {
+            String s = search.toLowerCase();
+            all.removeIf(p -> {
+                String haystack = Stream.of(p.getCode(), p.getName(), p.getContactPerson())
+                    .filter(Objects::nonNull).collect(java.util.stream.Collectors.joining()).toLowerCase();
+                return !haystack.contains(s);
+            });
+        }
+        all.sort(Comparator.comparing(Party::getCode));
+        int total = all.size(), pages = Math.max(1, (int)Math.ceil((double)total/size));
+        int from = Math.min(page*size, total), to = Math.min(from+size, total);
+        Map<String,Object> out = new LinkedHashMap<>();
+        out.put("content", all.subList(from, to));
+        out.put("totalElements", total); out.put("totalPages", pages);
+        out.put("number", page); out.put("size", size);
+        return out;
+    }
+
+    @PostMapping("/api/master/parties") Party createParty(@RequestBody Party p, Principal principal) {
+        p.setId(null);
+        if (p.getCreatedBy() == null) p.setCreatedBy(principalName(principal));
+        p.setCreatedAt(java.time.Instant.now());
+        return parties.save(p);
+    }
+
+    @PutMapping("/api/master/parties/{id}") @Transactional Party updateParty(@PathVariable Long id, @RequestBody ObjectNode body, Principal principal) {
+        Party e = parties.findById(id).orElseThrow(() -> new RuntimeException("Party not found"));
+        Party merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion()); merged.setCreatedBy(e.getCreatedBy()); merged.setCreatedAt(e.getCreatedAt());
+        merged.setUpdatedAt(java.time.Instant.now()); merged.setUpdatedBy(principalName(principal));
+        return parties.save(merged);
+    }
+
+    @DeleteMapping("/api/master/parties/{id}") void delParty(@PathVariable Long id) { parties.deleteById(id); }
+
+    // ---- Location CRUD ----
+    @GetMapping("/api/inventory/locations") List<LocationMaster> loc(){ return locs.findAll(); }
+    @GetMapping("/api/inventory/locations/{id}") LocationMaster getLoc(@PathVariable Long id){ return locs.findById(id).orElseThrow(); }
+
+    @PostMapping("/api/inventory/locations") LocationMaster createLoc(@RequestBody LocationMaster l, Principal principal) {
+        l.setId(null);
+        if (l.getCreatedBy() == null) l.setCreatedBy(principalName(principal));
+        l.setCreatedAt(java.time.Instant.now());
+        return locs.save(l);
+    }
+
+    @PutMapping("/api/inventory/locations/{id}") @Transactional LocationMaster updateLoc(@PathVariable Long id, @RequestBody ObjectNode body, Principal principal) {
+        LocationMaster e = locs.findById(id).orElseThrow(() -> new RuntimeException("Location not found"));
+        LocationMaster merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion()); merged.setCreatedBy(e.getCreatedBy()); merged.setCreatedAt(e.getCreatedAt());
+        merged.setUpdatedAt(java.time.Instant.now()); merged.setUpdatedBy(principalName(principal));
+        return locs.save(merged);
+    }
+
+    @DeleteMapping("/api/inventory/locations/{id}") void delLoc(@PathVariable Long id) { locs.deleteById(id); }
+
+    @GetMapping("/api/master/departments") List<String> depts(){ return List.of("Production","Maintenance","Quality","Tool Room","Stores"); }
+    @GetMapping("/api/purchase-orders") List<RefDoc> po(@RequestParam(required=false) String status){ return refs.findByKind("PO"); }
+    @GetMapping("/api/job-orders") List<RefDoc> jo(){ return refs.findByKind("JO"); }
+    @GetMapping("/api/labour-orders") List<RefDoc> lo(){ return refs.findByKind("LO"); }
+
+    // ---- Work Centers ----
+    @GetMapping("/api/master/work-centers") List<WorkCenter> workCenters(){ return workCenters.findAll(); }
+    @PostMapping("/api/master/work-centers") WorkCenter createWC(@RequestBody WorkCenter wc){ wc.setId(null); return workCenters.save(wc); }
+    @PutMapping("/api/master/work-centers/{id}") @Transactional WorkCenter updateWC(@PathVariable Long id, @RequestBody ObjectNode body){
+        WorkCenter e = workCenters.findById(id).orElseThrow(() -> new RuntimeException("Work Center not found"));
+        WorkCenter merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return workCenters.save(merged); }
+    @DeleteMapping("/api/master/work-centers/{id}") void delWC(@PathVariable Long id){ workCenters.deleteById(id); }
+
+    // ---- Machines ----
+    @GetMapping("/api/master/machines") List<MachineMaster> machines(){ return machines.findAll(); }
+    @GetMapping("/api/master/machines/{id}") MachineMaster getMachine(@PathVariable Long id){ return machines.findById(id).orElseThrow(); }
+    @PostMapping("/api/master/machines") MachineMaster createMachine(@RequestBody MachineMaster m){ m.setId(null); return machines.save(m); }
+    @PutMapping("/api/master/machines/{id}") @Transactional MachineMaster updateMachine(@PathVariable Long id, @RequestBody ObjectNode body){
+        MachineMaster e = machines.findById(id).orElseThrow(() -> new RuntimeException("Machine not found"));
+        MachineMaster merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return machines.save(merged); }
+    @DeleteMapping("/api/master/machines/{id}") void delMachine(@PathVariable Long id){ machines.deleteById(id); }
+
+    // ---- Operations ----
+    @GetMapping("/api/master/operations") List<OperationMaster> operations(){ return operations.findAll(); }
+    @PostMapping("/api/master/operations") OperationMaster createOp(@RequestBody OperationMaster o){ o.setId(null); return operations.save(o); }
+    @PutMapping("/api/master/operations/{id}") @Transactional OperationMaster updateOp(@PathVariable Long id, @RequestBody ObjectNode body){
+        OperationMaster e = operations.findById(id).orElseThrow(() -> new RuntimeException("Operation not found"));
+        OperationMaster merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return operations.save(merged); }
+    @DeleteMapping("/api/master/operations/{id}") void delOp(@PathVariable Long id){ operations.deleteById(id); }
+
+    // ---- Shift Calendar ----
+    @GetMapping("/api/master/shifts") List<ShiftCalendar> shifts(){ return shifts.findAll(); }
+    @PostMapping("/api/master/shifts") ShiftCalendar createShift(@RequestBody ShiftCalendar s){ s.setId(null); return shifts.save(s); }
+    @PutMapping("/api/master/shifts/{id}") @Transactional ShiftCalendar updateShift(@PathVariable Long id, @RequestBody ObjectNode body){
+        ShiftCalendar e = shifts.findById(id).orElseThrow(() -> new RuntimeException("Shift not found"));
+        ShiftCalendar merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return shifts.save(merged); }
+    @DeleteMapping("/api/master/shifts/{id}") void delShift(@PathVariable Long id){ shifts.deleteById(id); }
+
+    // ================================================================
+    //  MASTER MODULE V9 — New master data CRUD
+    // ================================================================
+    private final UOMMasterRepository uoms;
+    private final ItemGroupRepository itemGroups;
+    private final StoreMasterRepository stores;
+    private final ProcessGroupRepository processGroups;
+    private final ProcessMasterRepository processMasters;
+    private final InstrumentMasterRepository instruments;
+    private final ToolMasterRepository toolMasters;
+    private final CompanyInfoRepository companyInfos;
+    private final MasterAuditLogRepository auditLogs;
+
+    // ---- UOM Master ----
+    @GetMapping("/api/master/uoms")
+    List<Map<String,Object>> uomList() {
+        return uoms.findAll().stream().map(u -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", u.getId()); m.put("code", u.getCode()); m.put("name", u.getName());
+            m.put("symbol", u.getSymbol()); m.put("baseUom", u.getBaseUom()); m.put("conversionFactor", u.getConversionFactor());
+            m.put("description", u.getDescription()); m.put("active", u.isActive());
+            return m;
+        }).toList();
+    }
+    @GetMapping("/api/master/uoms/{id}") UOMMaster getUom(@PathVariable Long id){
+        return uoms.findById(id).orElseThrow(() -> new RuntimeException("UOM not found"));
+    }
+    @PostMapping("/api/master/uoms") UOMMaster createUom(@RequestBody UOMMaster u){ u.setId(null); return uoms.save(u); }
+    @PutMapping("/api/master/uoms/{id}") @Transactional UOMMaster updateUom(@PathVariable Long id, @RequestBody ObjectNode body){
+        UOMMaster e = uoms.findById(id).orElseThrow(() -> new RuntimeException("UOM not found"));
+        UOMMaster merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return uoms.save(merged);
+    }
+    @DeleteMapping("/api/master/uoms/{id}") void delUom(@PathVariable Long id){ uoms.deleteById(id); }
+
+    // ---- Item Group ----
+    @GetMapping("/api/master/item-groups") @Transactional(readOnly = true)
+    List<Map<String,Object>> itemGroupList() {
+        return itemGroups.findAll().stream().map(g -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", g.getId()); m.put("code", g.getCode()); m.put("name", g.getName());
+            m.put("itemType", g.getItemType()); m.put("description", g.getDescription()); m.put("active", g.isActive());
+            m.put("parentId", g.getParent() != null ? g.getParent().getId() : null);
+            m.put("parentCode", g.getParent() != null ? g.getParent().getCode() : null);
+            return m;
+        }).toList();
+    }
+    @GetMapping("/api/master/item-groups/{id}") ItemGroup getItemGroup(@PathVariable Long id){
+        return itemGroups.findById(id).orElseThrow(() -> new RuntimeException("Item Group not found"));
+    }
+    @PostMapping("/api/master/item-groups") ItemGroup createItemGroup(@RequestBody ItemGroup g){
+        g.setId(null); return itemGroups.save(g);
+    }
+    @PutMapping("/api/master/item-groups/{id}") @Transactional ItemGroup updateItemGroup(@PathVariable Long id, @RequestBody ObjectNode body){
+        ItemGroup e = itemGroups.findById(id).orElseThrow(() -> new RuntimeException("Item Group not found"));
+        ItemGroup merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        if (body.has("parentId") && !body.get("parentId").isNull()) {
+            merged.setParent(itemGroups.findById(body.get("parentId").asLong()).orElse(null));
+        } else if (body.has("parentId") && body.get("parentId").isNull()) {
+            merged.setParent(null);
+        }
+        return itemGroups.save(merged);
+    }
+    @DeleteMapping("/api/master/item-groups/{id}") void delItemGroup(@PathVariable Long id){ itemGroups.deleteById(id); }
+
+    // ---- Rack Master ----
+    private final RackMasterRepository rackMasters;
+
+    @GetMapping("/api/master/racks/next-code")
+    Map<String,String> nextRackCode() { return Map.of("code", docNumbers.next("rack")); }
+
+    @GetMapping("/api/master/racks/{id}")
+    RackMaster getRack(@PathVariable Long id) {
+        return rackMasters.findById(id).orElseThrow(() -> new IllegalArgumentException("Rack not found"));
+    }
+
+    @GetMapping("/api/master/racks") @Transactional(readOnly = true)
+    List<Map<String,Object>> rackList(@RequestParam(required=false) Long storeId) {
+        List<RackMaster> list = storeId != null ? rackMasters.findByStoreId(storeId) : rackMasters.findAll();
+        return list.stream().map(r -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", r.getId()); m.put("code", r.getCode()); m.put("name", r.getName());
+            m.put("storeId", r.getStore() != null ? r.getStore().getId() : null);
+            m.put("storeName", r.getStore() != null ? r.getStore().getName() : null);
+            m.put("location", r.getLocation()); m.put("capacity", r.getCapacity());
+            m.put("capacityUnit", r.getCapacityUnit()); m.put("remarks", r.getRemarks());
+            m.put("active", r.isActive());
+            return m;
+        }).toList();
+    }
+
+    @PostMapping("/api/master/racks") @Transactional RackMaster createRack(@RequestBody Map<String,Object> body){
+        RackMaster r = new RackMaster();
+        r.setCode((String) body.get("code"));
+        r.setName((String) body.get("name"));
+        r.setLocation((String) body.get("location"));
+        r.setCapacity(body.get("capacity") != null ? new java.math.BigDecimal(body.get("capacity").toString()) : null);
+        r.setCapacityUnit((String) body.get("capacityUnit"));
+        r.setRemarks((String) body.get("remarks"));
+        r.setActive(body.get("active") != null ? Boolean.TRUE.equals(body.get("active")) : true);
+        if (body.get("storeId") != null) r.setStore(stores.findById(Long.valueOf(body.get("storeId").toString())).orElse(null));
+        return rackMasters.save(r);
+    }
+    @PutMapping("/api/master/racks/{id}") @Transactional RackMaster updateRack(@PathVariable Long id, @RequestBody Map<String,Object> body){
+        RackMaster e = rackMasters.findById(id).orElseThrow(() -> new RuntimeException("Rack not found"));
+        if (body.containsKey("name")) e.setName((String) body.get("name"));
+        if (body.containsKey("location")) e.setLocation((String) body.get("location"));
+        if (body.containsKey("capacity")) e.setCapacity(body.get("capacity") != null ? new java.math.BigDecimal(body.get("capacity").toString()) : null);
+        if (body.containsKey("capacityUnit")) e.setCapacityUnit((String) body.get("capacityUnit"));
+        if (body.containsKey("remarks")) e.setRemarks((String) body.get("remarks"));
+        if (body.containsKey("active")) e.setActive(Boolean.TRUE.equals(body.get("active")));
+        if (body.containsKey("storeId")) e.setStore(body.get("storeId") != null ? stores.findById(Long.valueOf(body.get("storeId").toString())).orElse(null) : null);
+        return rackMasters.save(e);
+    }
+    @DeleteMapping("/api/master/racks/{id}") void delRack(@PathVariable Long id){ rackMasters.deleteById(id); }
+
+    // ---- Bin Master ----
+    private final BinMasterRepository binMasters;
+
+    @GetMapping("/api/master/bins/next-code")
+    Map<String,String> nextBinCode() { return Map.of("code", docNumbers.next("bin")); }
+
+    @GetMapping("/api/master/bins/{id}")
+    BinMaster getBin(@PathVariable Long id) {
+        return binMasters.findById(id).orElseThrow(() -> new IllegalArgumentException("Bin not found"));
+    }
+
+    @GetMapping("/api/master/bins") @Transactional(readOnly = true)
+    List<Map<String,Object>> binList(@RequestParam(required=false) Long storeId, @RequestParam(required=false) Long rackId) {
+        List<BinMaster> list;
+        if (rackId != null) list = binMasters.findByRackId(rackId);
+        else if (storeId != null) list = binMasters.findByStoreId(storeId);
+        else list = binMasters.findAll();
+        return list.stream().map(b -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", b.getId()); m.put("code", b.getCode()); m.put("name", b.getName());
+            m.put("storeId", b.getStore() != null ? b.getStore().getId() : null);
+            m.put("storeName", b.getStore() != null ? b.getStore().getName() : null);
+            m.put("rackId", b.getRack() != null ? b.getRack().getId() : null);
+            m.put("rackName", b.getRack() != null ? b.getRack().getName() : null);
+            m.put("location", b.getLocation()); m.put("capacity", b.getCapacity());
+            m.put("capacityUnit", b.getCapacityUnit()); m.put("remarks", b.getRemarks());
+            m.put("active", b.isActive());
+            return m;
+        }).toList();
+    }
+
+    @PostMapping("/api/master/bins") @Transactional BinMaster createBin(@RequestBody Map<String,Object> body){
+        BinMaster b = new BinMaster();
+        b.setCode((String) body.get("code"));
+        b.setName((String) body.get("name"));
+        b.setLocation((String) body.get("location"));
+        b.setCapacity(body.get("capacity") != null ? new java.math.BigDecimal(body.get("capacity").toString()) : null);
+        b.setCapacityUnit((String) body.get("capacityUnit"));
+        b.setRemarks((String) body.get("remarks"));
+        b.setActive(body.get("active") != null ? Boolean.TRUE.equals(body.get("active")) : true);
+        if (body.get("storeId") != null) b.setStore(stores.findById(Long.valueOf(body.get("storeId").toString())).orElse(null));
+        if (body.get("rackId") != null) b.setRack(rackMasters.findById(Long.valueOf(body.get("rackId").toString())).orElse(null));
+        return binMasters.save(b);
+    }
+    @PutMapping("/api/master/bins/{id}") @Transactional BinMaster updateBin(@PathVariable Long id, @RequestBody Map<String,Object> body){
+        BinMaster e = binMasters.findById(id).orElseThrow(() -> new RuntimeException("Bin not found"));
+        if (body.containsKey("name")) e.setName((String) body.get("name"));
+        if (body.containsKey("location")) e.setLocation((String) body.get("location"));
+        if (body.containsKey("capacity")) e.setCapacity(body.get("capacity") != null ? new java.math.BigDecimal(body.get("capacity").toString()) : null);
+        if (body.containsKey("capacityUnit")) e.setCapacityUnit((String) body.get("capacityUnit"));
+        if (body.containsKey("remarks")) e.setRemarks((String) body.get("remarks"));
+        if (body.containsKey("active")) e.setActive(Boolean.TRUE.equals(body.get("active")));
+        if (body.containsKey("storeId")) e.setStore(body.get("storeId") != null ? stores.findById(Long.valueOf(body.get("storeId").toString())).orElse(null) : null);
+        if (body.containsKey("rackId")) e.setRack(body.get("rackId") != null ? rackMasters.findById(Long.valueOf(body.get("rackId").toString())).orElse(null) : null);
+        return binMasters.save(e);
+    }
+    @DeleteMapping("/api/master/bins/{id}") void delBin(@PathVariable Long id){ binMasters.deleteById(id); }
+
+    // ---- Store Master ----
+    @GetMapping("/api/master/stores/{id}")
+    StoreMaster getStore(@PathVariable Long id) {
+        return stores.findById(id).orElseThrow(() -> new IllegalArgumentException("Store not found"));
+    }
+
+    @GetMapping("/api/master/stores")
+    List<Map<String,Object>> storeList() {
+        return stores.findAll().stream().map(s -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", s.getId()); m.put("code", s.getCode()); m.put("name", s.getName());
+            m.put("description", s.getDescription()); m.put("storeType", s.getStoreType());
+            m.put("department", s.getDepartment()); m.put("locationRef", s.getLocationRef());
+            m.put("location", s.getLocationRef());
+            m.put("isQcHold", s.isQcHold()); m.put("isWip", s.isWip());
+            m.put("isFinished", s.isFinished()); m.put("isRaw", s.isRaw());
+            m.put("isScrap", s.isScrap()); m.put("isDispatch", s.isDispatch());
+            m.put("binLocation", s.getBinLocation()); m.put("capacity", s.getCapacity());
+            m.put("remarks", s.getRemarks()); m.put("active", s.isActive());
+            return m;
+        }).toList();
+    }
+    @PostMapping("/api/master/stores") @Transactional StoreMaster createStore(@RequestBody Map<String,Object> body){
+        StoreMaster s = new StoreMaster();
+        applyStoreFields(s, body);
+        return stores.save(s);
+    }
+    @PutMapping("/api/master/stores/{id}") @Transactional StoreMaster updateStore(@PathVariable Long id, @RequestBody Map<String,Object> body){
+        StoreMaster e = stores.findById(id).orElseThrow(() -> new RuntimeException("Store not found"));
+        applyStoreFields(e, body);
+        return stores.save(e);
+    }
+    @DeleteMapping("/api/master/stores/{id}") void delStore(@PathVariable Long id){ stores.deleteById(id); }
+
+    private void applyStoreFields(StoreMaster s, Map<String,Object> b) {
+        if (b.containsKey("code")) s.setCode((String) b.get("code"));
+        if (b.containsKey("name")) s.setName((String) b.get("name"));
+        if (b.containsKey("description")) s.setDescription((String) b.get("description"));
+        if (b.containsKey("storeType")) s.setStoreType((String) b.get("storeType"));
+        if (b.containsKey("department")) s.setDepartment((String) b.get("department"));
+        if (b.containsKey("locationRef")) s.setLocationRef((String) b.get("locationRef"));
+        if (b.containsKey("location") && !b.containsKey("locationRef")) s.setLocationRef((String) b.get("location"));
+        if (b.containsKey("binLocation")) s.setBinLocation((String) b.get("binLocation"));
+        if (b.containsKey("capacity")) s.setCapacity(b.get("capacity") != null ? new java.math.BigDecimal(b.get("capacity").toString()) : null);
+        if (b.containsKey("remarks")) s.setRemarks((String) b.get("remarks"));
+        if (b.containsKey("active")) s.setActive(Boolean.TRUE.equals(b.get("active")));
+        if (b.containsKey("isQcHold")) s.setIsQcHold(Boolean.TRUE.equals(b.get("isQcHold")));
+        if (b.containsKey("isWip")) s.setIsWip(Boolean.TRUE.equals(b.get("isWip")));
+        if (b.containsKey("isFinished")) s.setIsFinished(Boolean.TRUE.equals(b.get("isFinished")));
+        if (b.containsKey("isRaw")) s.setIsRaw(Boolean.TRUE.equals(b.get("isRaw")));
+        if (b.containsKey("isScrap")) s.setIsScrap(Boolean.TRUE.equals(b.get("isScrap")));
+        if (b.containsKey("isDispatch")) s.setIsDispatch(Boolean.TRUE.equals(b.get("isDispatch")));
+    }
+
+    // ---- Process Group ----
+    @GetMapping("/api/master/process-groups")
+    List<Map<String,Object>> processGroupList() {
+        return processGroups.findAll().stream().map(g -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", g.getId()); m.put("code", g.getCode()); m.put("name", g.getName());
+            m.put("description", g.getDescription());
+            m.put("processFlow", g.getProcessFlow()); m.put("remarks", g.getRemarks());
+            m.put("active", g.isActive());
+            return m;
+        }).toList();
+    }
+    @GetMapping("/api/master/process-groups/{id}") ProcessGroup getProcessGroup(@PathVariable Long id){
+        return processGroups.findById(id).orElseThrow(() -> new RuntimeException("Process Group not found"));
+    }
+    @PostMapping("/api/master/process-groups") ProcessGroup createProcessGroup(@RequestBody ProcessGroup g){
+        g.setId(null); return processGroups.save(g);
+    }
+    @PutMapping("/api/master/process-groups/{id}") @Transactional ProcessGroup updateProcessGroup(@PathVariable Long id, @RequestBody ObjectNode body){
+        ProcessGroup e = processGroups.findById(id).orElseThrow(() -> new RuntimeException("Process Group not found"));
+        ProcessGroup merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return processGroups.save(merged);
+    }
+    @DeleteMapping("/api/master/process-groups/{id}") void delProcessGroup(@PathVariable Long id){ processGroups.deleteById(id); }
+
+    // ---- Process Master ----
+    @GetMapping("/api/master/processes")
+    List<Map<String,Object>> processList() {
+        return processMasters.findAll().stream().map(p -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", p.getId()); m.put("code", p.getCode()); m.put("name", p.getName());
+            m.put("description", p.getDescription()); m.put("cycleTime", p.getCycleTime());
+            m.put("setupTime", p.getSetupTime()); m.put("unitRate", p.getUnitRate());
+            m.put("machineRequired", p.isMachineRequired()); m.put("inspection", p.isInspection());
+            m.put("active", p.isActive());
+            m.put("processGroupId", p.getProcessGroup() != null ? p.getProcessGroup().getId() : null);
+            m.put("processGroupCode", p.getProcessGroup() != null ? p.getProcessGroup().getCode() : null);
+            return m;
+        }).toList();
+    }
+    @GetMapping("/api/master/processes/{id}") ProcessMaster getProcess(@PathVariable Long id){
+        return processMasters.findById(id).orElseThrow(() -> new RuntimeException("Process not found"));
+    }
+    @PostMapping("/api/master/processes") ProcessMaster createProcess(@RequestBody ProcessMaster p){ p.setId(null); return processMasters.save(p); }
+    @PutMapping("/api/master/processes/{id}") @Transactional ProcessMaster updateProcess(@PathVariable Long id, @RequestBody ObjectNode body){
+        ProcessMaster e = processMasters.findById(id).orElseThrow(() -> new RuntimeException("Process not found"));
+        ProcessMaster merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        if (body.has("processGroupId") && !body.get("processGroupId").isNull()) {
+            merged.setProcessGroup(processGroups.findById(body.get("processGroupId").asLong()).orElse(null));
+        } else if (body.has("processGroupId") && body.get("processGroupId").isNull()) {
+            merged.setProcessGroup(null);
+        }
+        return processMasters.save(merged);
+    }
+    @DeleteMapping("/api/master/processes/{id}") void delProcess(@PathVariable Long id){ processMasters.deleteById(id); }
+
+    // ---- Instrument Master ----
+    @GetMapping("/api/master/instruments")
+    List<Map<String,Object>> instrumentList() {
+        return instruments.findAll().stream().map(i -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", i.getId()); m.put("code", i.getCode()); m.put("name", i.getName());
+            m.put("instrumentType", i.getInstrumentType()); m.put("manufacturer", i.getManufacturer());
+            m.put("model", i.getModel()); m.put("serialNumber", i.getSerialNumber());
+            m.put("rangeMin", i.getRangeMin()); m.put("rangeMax", i.getRangeMax());
+            m.put("accuracy", i.getAccuracy()); m.put("leastCount", i.getLeastCount());
+            m.put("calibrationDue", i.getCalibrationDue()); m.put("calibrationCycle", i.getCalibrationCycle());
+            m.put("currentStatus", i.getCurrentStatus()); m.put("storeCode", i.getStoreCode());
+            m.put("active", i.isActive());
+            return m;
+        }).toList();
+    }
+    @GetMapping("/api/master/instruments/{id}") InstrumentMaster getInstrument(@PathVariable Long id){
+        return instruments.findById(id).orElseThrow(() -> new RuntimeException("Instrument not found"));
+    }
+    @PostMapping("/api/master/instruments") InstrumentMaster createInstrument(@RequestBody InstrumentMaster i){ i.setId(null); return instruments.save(i); }
+    @PutMapping("/api/master/instruments/{id}") @Transactional InstrumentMaster updateInstrument(@PathVariable Long id, @RequestBody ObjectNode body){
+        InstrumentMaster e = instruments.findById(id).orElseThrow(() -> new RuntimeException("Instrument not found"));
+        InstrumentMaster merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return instruments.save(merged);
+    }
+    @DeleteMapping("/api/master/instruments/{id}") void delInstrument(@PathVariable Long id){ instruments.deleteById(id); }
+
+    // ---- Tool Master ----
+    @GetMapping("/api/master/tools")
+    List<Map<String,Object>> toolList() {
+        return toolMasters.findAll().stream().map(t -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", t.getId()); m.put("code", t.getCode()); m.put("name", t.getName());
+            m.put("toolType", t.getToolType()); m.put("material", t.getMaterial());
+            m.put("shape", t.getShape()); m.put("dimension", t.getDimension());
+            m.put("machineCompatible", t.getMachineCompatible()); m.put("diameter", t.getDiameter());
+            m.put("fluteLength", t.getFluteLength()); m.put("overallLength", t.getOverallLength());
+            m.put("holderType", t.getHolderType()); m.put("toolLifeCount", t.getToolLifeCount());
+            m.put("toolLifeUnit", t.getToolLifeUnit()); m.put("currentUsage", t.getCurrentUsage());
+            m.put("supplierCode", t.getSupplierCode()); m.put("unitCost", t.getUnitCost());
+            m.put("reorderLevel", t.getReorderLevel()); m.put("currentStatus", t.getCurrentStatus());
+            m.put("storeCode", t.getStoreCode()); m.put("active", t.isActive());
+            return m;
+        }).toList();
+    }
+    @GetMapping("/api/master/tools/{id}") ToolMaster getTool(@PathVariable Long id){
+        return toolMasters.findById(id).orElseThrow(() -> new RuntimeException("Tool not found"));
+    }
+    @PostMapping("/api/master/tools") ToolMaster createTool(@RequestBody ToolMaster t){ t.setId(null); return toolMasters.save(t); }
+    @PutMapping("/api/master/tools/{id}") @Transactional ToolMaster updateTool(@PathVariable Long id, @RequestBody ObjectNode body){
+        ToolMaster e = toolMasters.findById(id).orElseThrow(() -> new RuntimeException("Tool not found"));
+        ToolMaster merged = mergePatch(e, body);
+        merged.setId(id); merged.setVersion(e.getVersion());
+        return toolMasters.save(merged);
+    }
+    @DeleteMapping("/api/master/tools/{id}") void delTool(@PathVariable Long id){ toolMasters.deleteById(id); }
+
+    // ---- Company Info (singleton, id=1) ----
+    @GetMapping("/api/master/company-info")
+    CompanyInfo getCompanyInfo() {
+        return companyInfos.findById(1L).orElseGet(() -> {
+            CompanyInfo ci = new CompanyInfo();
+            ci.setCompanyName("New Company");
+            return companyInfos.save(ci);
+        });
+    }
+    @PutMapping("/api/master/company-info")
+    @Transactional
+    CompanyInfo updateCompanyInfo(@RequestBody ObjectNode body) {
+        CompanyInfo existing = companyInfos.findById(1L).orElseGet(() -> {
+            CompanyInfo ci = new CompanyInfo();
+            ci.setId(1L);
+            ci.setCompanyName("New Company");
+            return companyInfos.save(ci);
+        });
+
+        CompanyInfo merged = mergePatch(existing, body);
+        merged.setId(1L);
+
+        // Sync dual-named fields so address and statutory numbers are never lost regardless of frontend key
+        if (body.hasNonNull("registeredAddress")) {
+            String regAdd = body.get("registeredAddress").asText();
+            merged.setRegisteredAddress(regAdd);
+            merged.setAddressLine1(regAdd);
+        } else if (body.hasNonNull("addressLine1")) {
+            String line1 = body.get("addressLine1").asText();
+            merged.setAddressLine1(line1);
+            merged.setRegisteredAddress(line1);
+        }
+
+        if (body.hasNonNull("deliveryAddress")) {
+            String delAdd = body.get("deliveryAddress").asText();
+            merged.setDeliveryAddress(delAdd);
+            merged.setAddressLine2(delAdd);
+        } else if (body.hasNonNull("addressLine2")) {
+            String line2 = body.get("addressLine2").asText();
+            merged.setAddressLine2(line2);
+            merged.setDeliveryAddress(line2);
+        }
+
+        if (body.hasNonNull("gstin")) {
+            String g = body.get("gstin").asText();
+            merged.setGstin(g);
+            merged.setGstNumber(g);
+        } else if (body.hasNonNull("gstNumber")) {
+            String g = body.get("gstNumber").asText();
+            merged.setGstNumber(g);
+            merged.setGstin(g);
+        }
+
+        if (body.hasNonNull("pan")) {
+            String p = body.get("pan").asText();
+            merged.setPan(p);
+            merged.setPanNumber(p);
+        } else if (body.hasNonNull("panNumber")) {
+            String p = body.get("panNumber").asText();
+            merged.setPanNumber(p);
+            merged.setPan(p);
+        }
+
+        if (body.hasNonNull("cin")) {
+            String c = body.get("cin").asText();
+            merged.setCin(c);
+            merged.setCinNumber(c);
+        } else if (body.hasNonNull("cinNumber")) {
+            String c = body.get("cinNumber").asText();
+            merged.setCinNumber(c);
+            merged.setCin(c);
+        }
+
+        merged.setUpdatedAt(java.time.Instant.now());
+        return companyInfos.save(merged);
+    }
+
+    // ---- Master Dashboard ----
+    @GetMapping("/api/master/dashboard")
+    Map<String,Object> dashboard() {
+        Map<String,Object> d = new LinkedHashMap<>();
+        d.put("items", items.count());
+        d.put("suppliers", parties.findByKind("SUPPLIER").size());
+        d.put("customers", parties.findByKind("CUSTOMER").size());
+        d.put("locations", locs.count());
+        d.put("machines", machines.count());
+        d.put("workCenters", workCenters.count());
+        d.put("operations", operations.count());
+        d.put("shifts", shifts.count());
+        d.put("uoms", uoms.count());
+        d.put("itemGroups", itemGroups.count());
+        d.put("stores", stores.count());
+        d.put("racks", rackMasters.count());
+        d.put("bins", binMasters.count());
+        d.put("processGroups", processGroups.count());
+        d.put("processes", processMasters.count());
+        d.put("instruments", instruments.count());
+        d.put("tools", toolMasters.count());
+        d.put("activeItems", items.findAll().stream().filter(ItemMaster::isActive).count());
+        d.put("inactiveItems", items.findAll().stream().filter(i -> !i.isActive()).count());
+        d.put("users", userRepo.count());
+        d.put("subcontractors", parties.findByKind("SUBCONTRACTOR").size());
+
+        List<MachineMaster> macList = machines.findAll();
+        d.put("machinesAvailable", macList.stream().filter(m -> "AVAILABLE".equalsIgnoreCase(m.getStatus())).count());
+        d.put("machinesRunning", macList.stream().filter(m -> "RUNNING".equalsIgnoreCase(m.getStatus())).count());
+        d.put("machinesBreakdown", macList.stream().filter(m -> "BREAKDOWN".equalsIgnoreCase(m.getStatus())).count());
+
+        List<InstrumentMaster> instList = instruments.findAll();
+        d.put("instrumentsValid", instList.stream().filter(i -> "VALID".equalsIgnoreCase(i.getCalibrationStatus())).count());
+        d.put("instrumentsDueSoon", instList.stream().filter(i -> "DUE_SOON".equalsIgnoreCase(i.getCalibrationStatus())).count());
+        d.put("instrumentsExpired", instList.stream().filter(i -> "EXPIRED".equalsIgnoreCase(i.getCalibrationStatus())).count());
+
+        List<ToolMaster> toolList = toolMasters.findAll();
+        d.put("toolsAvailable", toolList.stream().filter(t -> "AVAILABLE".equalsIgnoreCase(t.getCurrentStatus())).count());
+        d.put("toolsInUse", toolList.stream().filter(t -> "IN_USE".equalsIgnoreCase(t.getCurrentStatus())).count());
+
+        return d;
+    }
+
+
+    // ---- Audit Log (read-only) ----
+    @GetMapping("/api/master/audit-logs")
+    List<MasterAuditLog> auditLogs(
+            @RequestParam(required=false) String entityType,
+            @RequestParam(required=false) Long entityId) {
+        if (entityType != null && entityId != null)
+            return auditLogs.findByEntityTypeAndEntityIdOrderByChangedAtDesc(entityType, entityId);
+        return auditLogs.findTop200ByOrderByChangedAtDesc();
+    }
+
+    // ================================================================
+    //  USER MANAGEMENT (V10)
+    // ================================================================
+    private final UserRepository userRepo;
+    private final PasswordEncoder passwordEncoder;
+
+    @GetMapping("/api/master/users")
+    List<Map<String,Object>> userList() {
+        return userRepo.findAll().stream().map(u -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("id", u.getId()); m.put("username", u.getUsername());
+            m.put("fullName", u.getFullName()); m.put("email", u.getEmail());
+            m.put("phone", u.getPhone()); m.put("department", u.getDepartment());
+            m.put("designation", u.getDesignation()); m.put("role", u.getRole());
+            m.put("active", u.isActive());
+            return m;
+        }).toList();
+    }
+
+    @GetMapping("/api/master/users/{id}")
+    Map<String,Object> getUser(@PathVariable Long id) {
+        AppUser u = userRepo.findById(id).orElseThrow(() -> new RuntimeException("User not found"));
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("id", u.getId()); m.put("username", u.getUsername());
+        m.put("fullName", u.getFullName()); m.put("email", u.getEmail());
+        m.put("phone", u.getPhone()); m.put("department", u.getDepartment());
+        m.put("designation", u.getDesignation()); m.put("role", u.getRole());
+        m.put("active", u.isActive());
+        return m;
+    }
+
+    @PostMapping("/api/master/users")
+    Map<String,Object> createUser(@RequestBody Map<String,Object> body, Principal principal) {
+        String username = (String) body.getOrDefault("username", "");
+        if (username.isBlank()) throw new IllegalArgumentException("Username is required");
+        if (userRepo.existsByUsername(username)) throw new IllegalArgumentException("Username already exists");
+        String rawPassword = (String) body.getOrDefault("password", "");
+        if (rawPassword.isBlank()) throw new IllegalArgumentException("Password is required");
+
+        AppUser u = new AppUser();
+        u.setUsername(username);
+        u.setPassword(passwordEncoder.encode(rawPassword));
+        u.setFullName((String) body.getOrDefault("fullName", ""));
+        u.setEmail((String) body.getOrDefault("email", ""));
+        u.setPhone((String) body.getOrDefault("phone", ""));
+        u.setDepartment((String) body.getOrDefault("department", ""));
+        u.setDesignation((String) body.getOrDefault("designation", ""));
+        u.setRole((String) body.getOrDefault("role", "USER"));
+        u.setActive(true);
+        u.setCreatedBy(principalName(principal));
+        u.setCreatedAt(java.time.Instant.now());
+        userRepo.save(u);
+
+        Map<String,Object> out = new LinkedHashMap<>();
+        out.put("id", u.getId()); out.put("username", u.getUsername());
+        out.put("fullName", u.getFullName()); out.put("role", u.getRole());
+        out.put("active", u.isActive());
+        return out;
+    }
+
+    @PutMapping("/api/master/users/{id}")
+    Map<String,Object> updateUser(@PathVariable Long id, @RequestBody Map<String,Object> body, Principal principal) {
+        AppUser u = userRepo.findById(id).orElseThrow(() -> new RuntimeException("User not found"));
+        if (body.containsKey("fullName")) u.setFullName((String) body.get("fullName"));
+        if (body.containsKey("email")) u.setEmail((String) body.get("email"));
+        if (body.containsKey("phone")) u.setPhone((String) body.get("phone"));
+        if (body.containsKey("department")) u.setDepartment((String) body.get("department"));
+        if (body.containsKey("designation")) u.setDesignation((String) body.get("designation"));
+        if (body.containsKey("role")) u.setRole((String) body.get("role"));
+        if (body.containsKey("active")) u.setActive(Boolean.TRUE.equals(body.get("active")));
+        if (body.containsKey("password") && body.get("password") != null && !((String)body.get("password")).isBlank()) {
+            u.setPassword(passwordEncoder.encode((String) body.get("password")));
+        }
+        u.setUpdatedBy(principalName(principal));
+        u.setUpdatedAt(java.time.Instant.now());
+        userRepo.save(u);
+
+        Map<String,Object> out = new LinkedHashMap<>();
+        out.put("id", u.getId()); out.put("username", u.getUsername());
+        out.put("fullName", u.getFullName()); out.put("role", u.getRole());
+        out.put("active", u.isActive());
+        return out;
+    }
+
+    @DeleteMapping("/api/master/users/{id}")
+    void deleteUser(@PathVariable Long id) { userRepo.deleteById(id); }
+}

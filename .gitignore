@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+bin/
+out/
+.gradle/
+.vite/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE & OS
+.idea/
+.vscode/
+.DS_Store
+*.suo
+*.user
+
+# Graphify / Temp
+graphify-out/
+*.log

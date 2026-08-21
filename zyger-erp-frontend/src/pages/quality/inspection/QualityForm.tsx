@@ -1,0 +1,1302 @@
+import { useEffect, useMemo, useState } from 'react';
+import apiClient from '../../../api/axiosClient';
+import {
+  useQualityInspection,
+  useQualityInspectionCreate,
+  useQualitySaveMeasurements,
+  useQualityWorkflow,
+} from '../../../hooks/useQuality';
+import { useQualityNcrCreate } from '../../../hooks/useQualityNcr';
+import { qualityApi } from '../../../services/quality-api';
+import type {
+  CharacteristicLinePayload,
+  InspectionLineDto,
+  InspectionStatus,
+  InspectionType,
+} from '../../../types/quality/quality.types';
+import { formatDate, toOptionalNumber } from '../../../utils/format';
+import { getApiErrorMessage } from '../../../utils/apiError';
+import { useToast } from '../../../contexts/ToastContext';
+import { masterService } from '../../../services/masterService';
+import { lookupDocumentByNumber } from '../../../utils/documentLookup';
+import StatusBadge from '../../../components/common/StatusBadge';
+import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+
+const INSPECTION_TYPES: InspectionType[] = ['IQC', 'LO', 'JOMIN', 'FAI', 'IPQC', 'LINE', 'LAST_OFF', 'FINAL'];
+
+const TYPE_LABELS: Record<InspectionType, string> = {
+  IQC: 'Inward (IQC)',
+  LO: 'LO',
+  JOMIN: 'JOMIN',
+  FAI: 'First Article (FAI)',
+  IPQC: 'Process (IPQC)',
+  LINE: 'Line',
+  LAST_OFF: 'Last Off',
+  FINAL: 'Final',
+};
+
+interface DraftLine {
+  balloonNo?: string;
+  characteristicCode: string;
+  characteristicName: string;
+  uom: string;
+  nominalValue: string;
+  lowerLimit: string;
+  upperLimit: string;
+  actualValue: string;
+  isCritical: boolean;
+  instrumentCode: string;
+}
+
+interface QualityFormProps {
+  documentId?: string | number | null;
+  viewOnly?: boolean;
+  onBack: () => void;
+  defaultInspectionType?: InspectionType;
+}
+
+function emptyDraftLine(): DraftLine {
+  return {
+    balloonNo: '',
+    characteristicCode: '',
+    characteristicName: '',
+    uom: '',
+    nominalValue: '',
+    lowerLimit: '',
+    upperLimit: '',
+    actualValue: '',
+    isCritical: false,
+    instrumentCode: '',
+  };
+}
+
+function draftLineFromDto(line: InspectionLineDto): DraftLine {
+  return {
+    balloonNo: line.balloonNo ?? '',
+    characteristicCode: line.characteristicCode ?? '',
+    characteristicName: line.characteristicName ?? '',
+    uom: line.uom ?? '',
+    nominalValue: line.nominalValue != null ? String(line.nominalValue) : '',
+    lowerLimit: line.lowerLimit != null ? String(line.lowerLimit) : '',
+    upperLimit: line.upperLimit != null ? String(line.upperLimit) : '',
+    actualValue: line.actualValue != null ? String(line.actualValue) : '',
+    isCritical: Boolean(line.isCritical),
+    instrumentCode: line.instrumentCode ?? '',
+  };
+}
+
+function payloadFromDraftLines(lines: DraftLine[]): CharacteristicLinePayload[] {
+  return lines
+    .filter((line) => line.characteristicCode.trim() !== '')
+    .map((line) => ({
+      balloonNo: line.balloonNo?.trim() || undefined,
+      characteristicCode: line.characteristicCode.trim(),
+      characteristicName: line.characteristicName.trim() || undefined,
+      uom: line.uom.trim() || undefined,
+      nominalValue: toOptionalNumber(line.nominalValue),
+      lowerLimit: toOptionalNumber(line.lowerLimit),
+      upperLimit: toOptionalNumber(line.upperLimit),
+      actualValue: toOptionalNumber(line.actualValue),
+      isCritical: line.isCritical,
+      instrumentCode: line.instrumentCode.trim() || undefined,
+    }));
+}
+
+/** Client-side preview of the engine evaluation (persisted by the backend on save). */
+function previewResult(line: DraftLine): 'PASS' | 'FAIL' | 'PENDING' {
+  if (line.actualValue.trim() === '') {
+    return 'PENDING';
+  }
+
+  const actual = Number(line.actualValue);
+
+  if (Number.isNaN(actual)) {
+    return 'PENDING';
+  }
+
+  const lower = line.lowerLimit.trim() === '' ? null : Number(line.lowerLimit);
+  const upper = line.upperLimit.trim() === '' ? null : Number(line.upperLimit);
+
+  if (lower != null && actual < lower) return 'FAIL';
+  if (upper != null && actual > upper) return 'FAIL';
+
+  return 'PASS';
+}
+
+export function deviationLabel(line: DraftLine): string {
+  if (line.actualValue.trim() === '' || line.nominalValue.trim() === '') {
+    return '—';
+  }
+
+  const actual = Number(line.actualValue);
+  const nominal = Number(line.nominalValue);
+
+  if (Number.isNaN(actual) || Number.isNaN(nominal)) {
+    return '—';
+  }
+
+  return (actual - nominal).toFixed(3);
+}
+
+type DecisionModal =
+  | { kind: 'decide'; decision: 'PASS' | 'HOLD' | 'REJECT' }
+  | { kind: 'hold' }
+  | { kind: 'cancel' }
+  | { kind: 'close' }
+  | { kind: 'reopen' };
+
+export default function QualityForm({ documentId, viewOnly = false, onBack, defaultInspectionType }: QualityFormProps) {
+  const { toast } = useToast();
+
+  const isCreateMode = !documentId;
+
+  const documentQuery = useQualityInspection(isCreateMode ? null : documentId);
+  const inspection = documentQuery.data;
+
+  const createMutation = useQualityInspectionCreate();
+  const measurementsMutation = useQualitySaveMeasurements();
+  const workflowMutation = useQualityWorkflow();
+  const ncrCreateMutation = useQualityNcrCreate();
+
+  const [inwardOptions, setInwardOptions] = useState<Array<{ docNo: string; purchaseOrderNo?: string; supplier?: string; date?: string; items?: string }>>([]);
+
+  const [nextNumber, setNextNumber] = useState('—');
+  const [header, setHeader] = useState({
+    inspectionType: (defaultInspectionType ?? 'IQC') as InspectionType,
+    referenceDocNo: '',
+    purchaseOrderNumber: '',
+    partyCode: '',
+    partyName: '',
+    supplierChallanNo: '',
+    materialGrade: '',
+    mtcVerified: false,
+    mtcNumber: '',
+    ndtStatus: 'NA',
+    itemCode: `ITM-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
+    itemDescription: '',
+    receivedQuantity: '',
+    inspectionQuantity: '',
+    acceptedQuantity: '',
+    rejectedQuantity: '',
+    reworkQuantity: '',
+    holdQuantity: '',
+    machine: '',
+    operation: '',
+    programNumber: '',
+    setupNumber: '',
+    drawingNumber: '',
+    drawingRevision: '',
+    inspector: '',
+    lotNumber: '',
+    batchNumber: '',
+    serialNumber: '',
+    heatNumber: '',
+    remarks: '',
+  });
+  const [draftLines, setDraftLines] = useState<DraftLine[]>([emptyDraftLine()]);
+  const [decisionModal, setDecisionModal] = useState<DecisionModal | null>(null);
+  const [ncrForm, setNcrForm] = useState({ defectCode: '', quantityAffected: '', severity: 'MAJOR' });
+  const [initializedForId, setInitializedForId] = useState('');
+
+  useEffect(() => {
+    if (isCreateMode) {
+      const docTypeKey =
+        header.inspectionType === 'IQC'
+          ? 'po-inward'
+          : header.inspectionType === 'LO'
+          ? 'lo-inward'
+          : header.inspectionType === 'JOMIN' || header.inspectionType === 'IPQC'
+          ? 'job-order'
+          : 'general-inward';
+
+      apiClient.get<any>(`/inventory/documents/${docTypeKey}`, { params: { size: 50, sort: 'date,desc' } })
+        .then((res) => {
+          const content = res.data?.content || (Array.isArray(res.data) ? res.data : []);
+          const opts = content.map((d: any) => ({
+            docNo: String(d.docNo || d.number || ''),
+            purchaseOrderNo: String(d.purchaseOrderNo || d.purchaseOrderNumber || d.reference || ''),
+            supplier: String(d.supplier || d.party || d.supplierName || ''),
+            date: String(d.date || d.docDate || ''),
+            items: (d.lines || []).map((l: any) => l.itemCode).filter(Boolean).join(', '),
+          })).filter((o: any) => Boolean(o.docNo));
+          setInwardOptions(opts);
+        })
+        .catch(() => setInwardOptions([]));
+    }
+  }, [isCreateMode, header.inspectionType]);
+
+  const updateReferenceDocNo = (value: string) => {
+    setHeader((current) => ({ ...current, referenceDocNo: value }));
+    if (!value.trim()) return;
+
+    const docTypeKey =
+      header.inspectionType === 'IQC'
+        ? 'po-inward'
+        : header.inspectionType === 'LO'
+        ? 'lo-inward'
+        : header.inspectionType === 'JOMIN' || header.inspectionType === 'IPQC'
+        ? 'job-order'
+        : 'general-inward';
+
+    void lookupDocumentByNumber(docTypeKey, value.trim()).then((doc) => {
+      if (!doc) return;
+      setHeader((current) => ({
+        ...current,
+        referenceDocNo: doc.docNo || value.trim(),
+        purchaseOrderNumber: doc.raw.purchaseOrderNo || doc.raw.purchaseOrderNumber || doc.raw.poNo || current.purchaseOrderNumber,
+        itemCode: current.itemCode || doc.lines[0]?.itemCode || '',
+        receivedQuantity: current.receivedQuantity || String(doc.lines[0]?.qty || ''),
+        inspectionQuantity: current.inspectionQuantity || String(doc.lines[0]?.qty || ''),
+        acceptedQuantity: current.acceptedQuantity || String(doc.lines[0]?.qty || ''),
+        batchNumber: current.batchNumber || doc.lines[0]?.batchNo || doc.raw.batchNo || '',
+        heatNumber: current.heatNumber || doc.lines[0]?.heatNo || doc.raw.heatNo || '',
+        partyCode: current.partyCode || doc.raw.supplierCode || doc.raw.partyCode || '',
+        partyName: current.partyName || doc.party || doc.supplier || doc.raw.supplierName || '',
+        drawingNumber: current.drawingNumber || doc.raw.drawingNo || doc.raw.drawingNumber || '',
+        drawingRevision: current.drawingRevision || doc.raw.drawingRev || doc.raw.drawingRevision || '',
+        materialGrade: current.materialGrade || doc.raw.materialGrade || doc.raw.grade || '',
+        supplierChallanNo: current.supplierChallanNo || doc.raw.supplierChallanNo || doc.raw.challanNo || '',
+      }));
+
+      // Pre-seed default IQC characteristic inspection lines if only 1 blank line exists
+      if (header.inspectionType === 'IQC') {
+        setDraftLines((lines) => {
+          if (lines.length <= 1 && (!lines[0]?.characteristicCode || lines[0]?.characteristicCode === '')) {
+            return [
+              { characteristicCode: 'RM_DIM_OD', characteristicName: 'Raw Material OD / Thickness Check', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
+              { characteristicCode: 'RM_DIM_LEN', characteristicName: 'Raw Material Length Check', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: false, instrumentCode: '' },
+              { characteristicCode: 'MAT_GRADE', characteristicName: 'Material Grade & Spec Verification', uom: 'SPEC', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
+              { characteristicCode: 'MTC_COC', characteristicName: 'Mill Test Certificate (MTC) / CoC Verified', uom: 'DOC', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
+              { characteristicCode: 'HEAT_NO', characteristicName: 'Heat Number Traceability & Stamping', uom: 'CHK', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
+              { characteristicCode: 'SURFACE_RUST', characteristicName: 'Visual Surface Defect / Rust / Bending Check', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: false, instrumentCode: '' },
+              { characteristicCode: 'HARDNESS', characteristicName: 'Material Hardness Check (HRC/BHN)', uom: 'HRC', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: false, instrumentCode: '' },
+            ];
+          }
+          return lines;
+        });
+      }
+    });
+  };
+
+  const updateItemCode = (value: string) => {
+    setHeader((current) => ({ ...current, itemCode: value }));
+    if (!value.trim()) return;
+
+    void masterService.getItems().then((items) => {
+      const item = items.find((i) => i.code === value.trim());
+      if (item) {
+        setDraftLines((current) =>
+          current.map((line, idx) => (idx === 0 && !line.uom ? { ...line, uom: item.uom } : line))
+        );
+      }
+    });
+  };
+
+  useEffect(() => {
+    qualityApi.getNextNumber().then((result) => setNextNumber(result.nextNumber)).catch(() => setNextNumber('—'));
+  }, [isCreateMode]);
+
+  useEffect(() => {
+    if (!inspection || !documentId) {
+      return;
+    }
+
+    const key = String(documentId);
+
+    if (initializedForId === key) {
+      return;
+    }
+
+    setInitializedForId(key);
+    setHeader({
+      inspectionType: inspection.inspectionType,
+      referenceDocNo: inspection.sourceNumber ?? inspection.referenceNumber ?? inspection.referenceDocNo ?? '',
+      purchaseOrderNumber: inspection.purchaseOrderNumber ?? '',
+      partyCode: inspection.partyCode ?? '',
+      partyName: inspection.partyName ?? '',
+      supplierChallanNo: inspection.supplierChallanNo ?? '',
+      materialGrade: inspection.materialGrade ?? '',
+      mtcVerified: inspection.mtcVerified ?? false,
+      mtcNumber: inspection.mtcNumber ?? '',
+      ndtStatus: inspection.ndtStatus ?? 'NA',
+      itemCode: inspection.itemCode ?? '',
+      itemDescription: inspection.itemDescription ?? '',
+      receivedQuantity: inspection.receivedQuantity != null ? String(inspection.receivedQuantity) : '',
+      inspectionQuantity: inspection.inspectionQuantity != null ? String(inspection.inspectionQuantity) : '',
+      acceptedQuantity: inspection.acceptedQuantity != null ? String(inspection.acceptedQuantity) : '',
+      rejectedQuantity: inspection.rejectedQuantity != null ? String(inspection.rejectedQuantity) : '',
+      reworkQuantity: inspection.reworkQuantity != null ? String(inspection.reworkQuantity) : '',
+      holdQuantity: inspection.holdQuantity != null ? String(inspection.holdQuantity) : '',
+      machine: inspection.machine ?? '',
+      operation: inspection.operation ?? '',
+      programNumber: inspection.programNumber ?? '',
+      setupNumber: inspection.setupNumber ?? '',
+      drawingNumber: inspection.drawingNumber ?? '',
+      drawingRevision: inspection.drawingRevision ?? '',
+      inspector: inspection.inspector ?? inspection.assignedInspector ?? '',
+      lotNumber: inspection.lotNumber ?? '',
+      batchNumber: inspection.batchNumber ?? '',
+      serialNumber: inspection.serialNumber ?? '',
+      heatNumber: inspection.heatNumber ?? '',
+      remarks: inspection.remarks ?? '',
+    });
+    setDraftLines(
+      (inspection.lines ?? []).length > 0
+        ? inspection.lines.map(draftLineFromDto)
+        : [emptyDraftLine()]
+    );
+  }, [inspection, documentId, initializedForId]);
+
+  const status: InspectionStatus = inspection?.inspectionStatus ?? 'DRAFT';
+  const measurementsEditable =
+    !viewOnly && !isCreateMode && !['CLOSED', 'APPROVED', 'CANCELLED'].includes(status);
+
+  const isBusy =
+    createMutation.isPending ||
+    measurementsMutation.isPending ||
+    workflowMutation.isPending ||
+    ncrCreateMutation.isPending;
+
+  const summary = useMemo(() => {
+    const evaluated = draftLines.filter((line) => previewResult(line) !== 'PENDING');
+
+    return {
+      total: draftLines.filter((line) => line.characteristicCode.trim() !== '').length,
+      passed: evaluated.filter((line) => previewResult(line) === 'PASS').length,
+      failed: evaluated.filter((line) => previewResult(line) === 'FAIL').length,
+      criticalFailed: draftLines.filter((line) => line.isCritical && previewResult(line) === 'FAIL').length,
+    };
+  }, [draftLines]);
+
+  const updateDraftLine = (index: number, changes: Partial<DraftLine>) => {
+    setDraftLines((current) =>
+      current.map((line, lineIndex) => (lineIndex === index ? { ...line, ...changes } : line))
+    );
+  };
+
+  void summary;
+  void updateDraftLine;
+
+  const handleCreate = async () => {
+    let payloadLines = payloadFromDraftLines(draftLines);
+
+    if (!header.itemCode.trim()) {
+      toast('Item code is required.', 'error');
+      return;
+    }
+
+    if (payloadLines.length === 0) {
+      payloadLines = [
+        {
+          characteristicCode: 'INSP_GEN',
+          characteristicName: 'General Quality Inspection',
+          uom: 'PCS',
+          isCritical: false,
+        },
+      ];
+    }
+
+    try {
+      const created = await createMutation.mutateAsync({
+        inspectionType: header.inspectionType,
+        itemCode: header.itemCode.trim(),
+        itemDescription: header.itemDescription.trim() || undefined,
+        referenceDocNo: header.referenceDocNo.trim() || undefined,
+        purchaseOrderNumber: header.purchaseOrderNumber.trim() || undefined,
+        partyCode: header.partyCode.trim() || undefined,
+        partyName: header.partyName.trim() || undefined,
+        supplierChallanNo: header.supplierChallanNo.trim() || undefined,
+        materialGrade: header.materialGrade.trim() || undefined,
+        mtcVerified: header.mtcVerified,
+        mtcNumber: header.mtcNumber.trim() || undefined,
+        ndtStatus: header.ndtStatus || undefined,
+        receivedQuantity: Number(header.receivedQuantity || 0),
+        inspectionQuantity: Number(header.inspectionQuantity || 0),
+        acceptedQuantity: toOptionalNumber(header.acceptedQuantity),
+        rejectedQuantity: toOptionalNumber(header.rejectedQuantity),
+        reworkQuantity: toOptionalNumber(header.reworkQuantity),
+        holdQuantity: toOptionalNumber(header.holdQuantity),
+        machine: header.machine.trim() || undefined,
+        operation: header.operation.trim() || undefined,
+        programNumber: header.programNumber.trim() || undefined,
+        setupNumber: header.setupNumber.trim() || undefined,
+        drawingNumber: header.drawingNumber.trim() || undefined,
+        drawingRevision: header.drawingRevision.trim() || undefined,
+        inspector: header.inspector.trim() || undefined,
+        lotNumber: header.lotNumber.trim() || undefined,
+        batchNumber: header.batchNumber.trim() || undefined,
+        serialNumber: header.serialNumber.trim() || undefined,
+        heatNumber: header.heatNumber.trim() || undefined,
+        remarks: header.remarks.trim() || undefined,
+        lines: payloadLines,
+      });
+
+      toast(`${created.docNo ?? 'Inspection'} created as draft.`);
+      onBack();
+    } catch (createError) {
+      toast(getApiErrorMessage(createError, 'Create failed.'), 'error');
+    }
+  };
+
+  const handleSaveMeasurements = async () => {
+    if (!documentId || !inspection) {
+      return;
+    }
+
+    const payloadLines = payloadFromDraftLines(draftLines);
+
+    if (payloadLines.length === 0) {
+      toast('Add at least one characteristic with a code.', 'error');
+      return;
+    }
+
+    try {
+      await measurementsMutation.mutateAsync({
+        id: documentId,
+        lines: payloadLines,
+      });
+
+      toast(`${inspection.docNo ?? 'Inspection'} measurements saved and re-evaluated.`);
+    } catch (saveError) {
+      toast(getApiErrorMessage(saveError, 'Save measurements failed.'), 'error');
+    }
+  };
+
+  const runWorkflow = async (
+    action: Parameters<typeof workflowMutation.mutateAsync>[0]['action'],
+    remarks?: string,
+    decision?: 'PASS' | 'HOLD' | 'REJECT'
+  ) => {
+    if (!documentId) {
+      return;
+    }
+
+    try {
+      const updated = await workflowMutation.mutateAsync({
+        id: documentId,
+        action,
+        decision,
+        remarks,
+      });
+
+      setDecisionModal(null);
+      toast(`${updated.docNo ?? 'Inspection'} • ${action} completed.`);
+    } catch (actionError) {
+      toast(getApiErrorMessage(actionError, `${action} failed.`), 'error');
+    }
+  };
+
+  const handleCreateNcr = async () => {
+    if (!documentId || !inspection) {
+      return;
+    }
+
+    if (!ncrForm.defectCode.trim()) {
+      toast('Defect code is required.', 'error');
+      return;
+    }
+
+    try {
+      const ncr = await ncrCreateMutation.mutateAsync({
+        inspectionId: Number(documentId),
+        itemCode: inspection.itemCode ?? '',
+        quantityAffected: Number(ncrForm.quantityAffected || 0),
+        defectCode: ncrForm.defectCode.trim(),
+        severity: ncrForm.severity as 'CRITICAL' | 'MAJOR' | 'MINOR' | 'ADVISORY',
+      });
+
+      setNcrForm({ defectCode: '', quantityAffected: '', severity: 'MAJOR' });
+      toast(`${ncr.docNo ?? 'NCR'} created — inspection can now be closed.`);
+    } catch (ncrError) {
+      toast(getApiErrorMessage(ncrError, 'NCR creation failed.'), 'error');
+    }
+  };
+
+  if (!isCreateMode && documentQuery.isPending) {
+    return (
+      <div className="panel">
+        <div className="empty">
+          <span className="material-symbols-rounded">hourglass_empty</span>
+          Loading inspection...
+        </div>
+      </div>
+    );
+  }
+
+  if (!isCreateMode && documentQuery.isError) {
+    return (
+      <div className="panel">
+        <div className="empty">
+          <span className="material-symbols-rounded">error</span>
+          {getApiErrorMessage(documentQuery.error, 'Unable to load inspection.')}
+          <div style={{ marginTop: '14px' }}>
+            <button className="btn" onClick={() => documentQuery.refetch()}>
+              <span className="material-symbols-rounded">refresh</span>
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const docNo = inspection?.docNo ?? nextNumber;
+
+  return (
+    <>
+      <div className="pg-head">
+        <h1>
+          {viewOnly ? 'View' : isCreateMode ? 'New' : 'Open'} Inspection — {docNo}
+        </h1>
+        <p>
+          {TYPE_LABELS[header.inspectionType]} • Workflow: DRAFT → IN_PROGRESS → SUBMITTED →
+          PASS/HOLD/FAIL → CLOSED
+        </p>
+      </div>
+
+      {!isCreateMode && (
+        <div className="note">
+          <span className="material-symbols-rounded">info</span>
+          <span>
+            Auto-evaluation: PASS when lower ≤ actual ≤ upper • Critical failures force HOLD •
+            Failed characteristics require an NCR before closing
+          </span>
+        </div>
+      )}
+
+      <form onSubmit={(event) => event.preventDefault()}>
+        <div className="panel">
+          <div className="panel-h">
+            <h2>
+              <span className="material-symbols-rounded">description</span>
+              Header
+            </h2>
+
+            {!isCreateMode && <StatusBadge status={status} />}
+          </div>
+
+          <div className="fgrid">
+            <label className="fld">
+              <span>Inspection No</span>
+              <input className="in" value={docNo} readOnly tabIndex={-1} />
+            </label>
+
+            <label className="fld">
+              <span>
+                Type <em>*</em>
+              </span>
+              <select
+                className="in"
+                value={header.inspectionType}
+                disabled={!isCreateMode || Boolean(defaultInspectionType)}
+                onChange={(event) =>
+                  setHeader((current) => ({
+                    ...current,
+                    inspectionType: event.target.value as InspectionType,
+                  }))
+                }
+              >
+                {INSPECTION_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="fld">
+              <span>Ref Doc No (GRN / Inward / JO / PO)</span>
+              {isCreateMode && inwardOptions.length > 0 ? (
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <select
+                    className="in"
+                    style={{ flex: 1 }}
+                    value={header.referenceDocNo}
+                    onChange={(event) => updateReferenceDocNo(event.target.value)}
+                  >
+                    <option value="">-- Select Inward Doc --</option>
+                    {inwardOptions.map((opt) => (
+                      <option key={opt.docNo} value={opt.docNo}>
+                        {opt.docNo} {opt.purchaseOrderNo ? `(PO: ${opt.purchaseOrderNo})` : ''} {opt.supplier ? `• ${opt.supplier}` : ''} {opt.items ? `[${opt.items}]` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="in"
+                    style={{ width: '120px' }}
+                    placeholder="Or type..."
+                    value={header.referenceDocNo}
+                    onChange={(event) => updateReferenceDocNo(event.target.value)}
+                  />
+                </div>
+              ) : (
+                <input
+                  className="in"
+                  placeholder="Enter ref doc no to auto-fill..."
+                  value={header.referenceDocNo}
+                  readOnly={!isCreateMode}
+                  onChange={(event) => updateReferenceDocNo(event.target.value)}
+                />
+              )}
+            </label>
+
+            <label className="fld">
+              <span>Purchase Order No</span>
+              <input
+                className="in"
+                placeholder="e.g. PO-2026-0089"
+                value={header.purchaseOrderNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, purchaseOrderNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Supplier Code & Name</span>
+              <input
+                className="in"
+                placeholder="e.g. SUP-001 • Apex Metals Corp"
+                value={header.partyName ? `${header.partyCode ? `${header.partyCode} • ` : ''}${header.partyName}` : header.partyCode}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, partyName: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Supplier Invoice / Challan No</span>
+              <input
+                className="in"
+                placeholder="e.g. INV-8821 / DC-4091"
+                value={header.supplierChallanNo}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, supplierChallanNo: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Material Grade / Specification</span>
+              <input
+                className="in"
+                placeholder="e.g. SS304, AL6061-T6, EN8"
+                value={header.materialGrade}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, materialGrade: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>MTC / CoC Verified?</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                <input
+                  type="checkbox"
+                  id="mtcVerifiedCheck"
+                  checked={header.mtcVerified}
+                  disabled={!isCreateMode}
+                  onChange={(event) =>
+                    setHeader((current) => ({ ...current, mtcVerified: event.target.checked }))
+                  }
+                />
+                <label htmlFor="mtcVerifiedCheck" style={{ fontSize: '0.82rem', cursor: 'pointer', margin: 0 }}>
+                  Mill Test Cert Verified
+                </label>
+              </div>
+            </label>
+
+            <label className="fld">
+              <span>MTC Certificate No</span>
+              <input
+                className="in"
+                placeholder="e.g. MTC-2026-904"
+                value={header.mtcNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, mtcNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>NDT / Ultrasonic Clearance</span>
+              <select
+                className="in"
+                value={header.ndtStatus}
+                disabled={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, ndtStatus: event.target.value }))
+                }
+              >
+                <option value="NA">N/A (Not Applicable)</option>
+                <option value="PASS">PASS (UT Cleared)</option>
+                <option value="FAIL">FAIL (Defect Detected)</option>
+                <option value="PENDING">PENDING (Testing Underway)</option>
+              </select>
+            </label>
+
+            <label className="fld">
+              <span>
+                Item Code <em>*</em>
+              </span>
+              <input
+                className="in"
+                value={header.itemCode}
+                readOnly={!isCreateMode}
+                onChange={(event) => updateItemCode(event.target.value)}
+              />
+            </label>
+
+            <label className="fld">
+              <span>
+                Item Name <em>*</em>
+              </span>
+              <input
+                className="in"
+                placeholder="Enter item name..."
+                value={header.itemDescription}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, itemDescription: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>
+                Received Qty <em>*</em>
+              </span>
+              <input
+                type="number"
+                className="in"
+                value={header.receivedQuantity}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, receivedQuantity: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>
+                Inspection Qty <em>*</em>
+              </span>
+              <input
+                type="number"
+                className="in"
+                value={header.inspectionQuantity}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, inspectionQuantity: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Lot No</span>
+              <input
+                className="in"
+                value={header.lotNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, lotNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Batch No</span>
+              <input
+                className="in"
+                value={header.batchNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, batchNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Serial No</span>
+              <input
+                className="in"
+                value={header.serialNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, serialNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Heat No</span>
+              <input
+                className="in"
+                value={header.heatNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, heatNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>CNC Machine / Equip ID</span>
+              <input
+                className="in"
+                placeholder="e.g. VMC-01, CNC-LATHE-02"
+                value={header.machine}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, machine: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Operation No / Name</span>
+              <input
+                className="in"
+                placeholder="e.g. Op 10 Turning"
+                value={header.operation}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, operation: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>CNC Program No</span>
+              <input
+                className="in"
+                placeholder="e.g. O1002"
+                value={header.programNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, programNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Setup No</span>
+              <input
+                className="in"
+                placeholder="e.g. Setup 1"
+                value={header.setupNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, setupNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Drawing No</span>
+              <input
+                className="in"
+                value={header.drawingNumber}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, drawingNumber: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Drawing Rev</span>
+              <input
+                className="in"
+                value={header.drawingRevision}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, drawingRevision: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Inspector / Operator</span>
+              <input
+                className="in"
+                value={header.inspector}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, inspector: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Accepted Qty</span>
+              <input
+                type="number"
+                className="in"
+                value={header.acceptedQuantity}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, acceptedQuantity: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Rejected Qty</span>
+              <input
+                type="number"
+                className="in"
+                value={header.rejectedQuantity}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, rejectedQuantity: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Rework Qty</span>
+              <input
+                type="number"
+                className="in"
+                value={header.reworkQuantity}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, reworkQuantity: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld">
+              <span>Hold Qty</span>
+              <input
+                type="number"
+                className="in"
+                value={header.holdQuantity}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, holdQuantity: event.target.value }))
+                }
+              />
+            </label>
+
+            <label className="fld span2">
+              <span>Remarks</span>
+              <input
+                className="in"
+                value={header.remarks}
+                readOnly={!isCreateMode}
+                onChange={(event) =>
+                  setHeader((current) => ({ ...current, remarks: event.target.value }))
+                }
+              />
+            </label>
+          </div>
+        </div>
+
+        {status === 'FAIL' && !viewOnly && (
+          <div className="panel">
+            <div className="panel-h">
+              <h2>
+                <span className="material-symbols-rounded">report</span>
+                Disposition Required — Create NCR
+              </h2>
+            </div>
+
+            <div className="fgrid">
+              <label className="fld">
+                <span>
+                  Defect Code <em>*</em>
+                </span>
+                <input
+                  className="in"
+                  value={ncrForm.defectCode}
+                  onChange={(event) =>
+                    setNcrForm((current) => ({ ...current, defectCode: event.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="fld">
+                <span>Quantity Affected</span>
+                <input
+                  className="in"
+                  type="number"
+                  value={ncrForm.quantityAffected}
+                  onChange={(event) =>
+                    setNcrForm((current) => ({ ...current, quantityAffected: event.target.value }))
+                  }
+                />
+              </label>
+
+              <label className="fld">
+                <span>Severity</span>
+                <select
+                  className="in"
+                  value={ncrForm.severity}
+                  onChange={(event) =>
+                    setNcrForm((current) => ({ ...current, severity: event.target.value }))
+                  }
+                >
+                  <option value="CRITICAL">Critical</option>
+                  <option value="MAJOR">Major</option>
+                  <option value="MINOR">Minor</option>
+                  <option value="ADVISORY">Advisory</option>
+                </select>
+              </label>
+
+              <div className="fld">
+                <span>&nbsp;</span>
+                <button
+                  type="button"
+                  className="btn btn-p"
+                  onClick={handleCreateNcr}
+                  disabled={isBusy}
+                >
+                  <span className="material-symbols-rounded">add_circle</span>
+                  Create NCR
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="panel">
+          <div className="actbar">
+            <span className="lft">
+              <span className="material-symbols-rounded">lock</span>
+              {isCreateMode
+                ? 'New inspection'
+                : `Audited • created ${formatDate(inspection?.createdAt ?? null)}`}
+            </span>
+
+            <button type="button" className="btn" onClick={onBack} disabled={isBusy}>
+              <span className="material-symbols-rounded">arrow_back</span>
+              Back
+            </button>
+
+            {isCreateMode && (
+              <button type="button" className="btn btn-p" onClick={handleCreate} disabled={isBusy}>
+                <span className="material-symbols-rounded">inventory</span>
+                Save &amp; Update Inventory
+              </button>
+            )}
+
+            {!isCreateMode && !viewOnly && (
+              <>
+                {status === 'DRAFT' && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => runWorkflow('start')}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">play_arrow</span>
+                    Start Inspection
+                  </button>
+                )}
+
+                {measurementsEditable && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={handleSaveMeasurements}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">save</span>
+                    Save Measurements
+                  </button>
+                )}
+
+                {['DRAFT', 'IN_PROGRESS'].includes(status) && (
+                  <button
+                    type="button"
+                    className="btn btn-p"
+                    onClick={() => runWorkflow('submit')}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">send</span>
+                    Submit for Decision
+                  </button>
+                )}
+
+                {status === 'SUBMITTED' && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-g"
+                      onClick={() => setDecisionModal({ kind: 'decide', decision: 'PASS' })}
+                      disabled={isBusy}
+                    >
+                      <span className="material-symbols-rounded">check_circle</span>
+                      Decide PASS
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => setDecisionModal({ kind: 'decide', decision: 'HOLD' })}
+                      disabled={isBusy}
+                    >
+                      <span className="material-symbols-rounded">pause_circle</span>
+                      Decide HOLD
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-d"
+                      onClick={() => setDecisionModal({ kind: 'decide', decision: 'REJECT' })}
+                      disabled={isBusy}
+                    >
+                      <span className="material-symbols-rounded">cancel</span>
+                      Decide REJECT
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-g"
+                      onClick={() => runWorkflow('approve')}
+                      disabled={isBusy}
+                    >
+                      <span className="material-symbols-rounded">thumb_up</span>
+                      Approve
+                    </button>
+                  </>
+                )}
+
+                {['SUBMITTED', 'IN_PROGRESS'].includes(status) && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setDecisionModal({ kind: 'hold' })}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">back_hand</span>
+                    Hold
+                  </button>
+                )}
+
+                {status === 'HOLD' && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => runWorkflow('release-hold')}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">play_circle</span>
+                    Release Hold
+                  </button>
+                )}
+
+                {['PASS', 'HOLD', 'APPROVED', 'FAIL', 'SUBMITTED'].includes(status) && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setDecisionModal({ kind: 'close' })}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">task_alt</span>
+                    Close
+                  </button>
+                )}
+
+                {['DRAFT', 'SUBMITTED'].includes(status) && (
+                  <button
+                    type="button"
+                    className="btn btn-d"
+                    onClick={() => setDecisionModal({ kind: 'cancel' })}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">block</span>
+                    Cancel
+                  </button>
+                )}
+
+                {['CLOSED', 'CANCELLED'].includes(status) && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setDecisionModal({ kind: 'reopen' })}
+                    disabled={isBusy}
+                  >
+                    <span className="material-symbols-rounded">restart_alt</span>
+                    Reopen
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </form>
+
+      <ConfirmActionModal
+        open={decisionModal !== null}
+        title={
+          decisionModal?.kind === 'decide'
+            ? `Decide ${decisionModal.decision} — ${docNo}`
+            : decisionModal?.kind === 'close'
+              ? `Close ${docNo}`
+              : decisionModal?.kind === 'cancel'
+                ? `Cancel ${docNo}`
+                : decisionModal?.kind === 'reopen'
+                  ? `Reopen ${docNo}`
+                  : `Hold ${docNo}`
+        }
+        body={
+          decisionModal?.kind === 'decide'
+            ? decisionModal.decision === 'PASS'
+              ? 'Confirm the inspection PASSED all characteristics. Critical failures will still force HOLD.'
+              : decisionModal.decision === 'HOLD'
+                ? 'Confirm the inspection should be placed ON HOLD pending review.'
+                : 'Confirm the inspection is REJECTED. An NCR disposition will be required before closing.'
+            : decisionModal?.kind === 'close'
+              ? 'Close the inspection. Failed characteristics require an NCR disposition first.'
+              : decisionModal?.kind === 'cancel'
+                ? 'This cancels the inspection with an audit trail.'
+                : decisionModal?.kind === 'reopen'
+                  ? 'Reopening a closed inspection requires authorization.'
+                  : 'Reason for holding the inspection:'
+        }
+        okLabel={
+          decisionModal?.kind === 'decide'
+            ? `Decide ${decisionModal.decision}`
+            : decisionModal?.kind === 'close'
+              ? 'Close'
+              : decisionModal?.kind === 'cancel'
+                ? 'Cancel Inspection'
+                : decisionModal?.kind === 'reopen'
+                  ? 'Reopen'
+                  : 'Hold'
+        }
+        danger={
+          decisionModal?.kind === 'cancel' ||
+          (decisionModal?.kind === 'decide' && decisionModal.decision === 'REJECT')
+        }
+        busy={workflowMutation.isPending}
+        onClose={() => setDecisionModal(null)}
+        onConfirm={(note) => {
+          if (!decisionModal) {
+            return;
+          }
+
+          if (decisionModal.kind === 'decide') {
+            runWorkflow('decide', note, decisionModal.decision);
+          } else if (decisionModal.kind === 'hold') {
+            runWorkflow('hold', note);
+          } else if (decisionModal.kind === 'cancel') {
+            runWorkflow('cancel', note);
+          } else if (decisionModal.kind === 'reopen') {
+            runWorkflow('reopen', note);
+          } else {
+            runWorkflow('close', note);
+          }
+        }}
+      />
+    </>
+  );
+}

@@ -1,0 +1,163 @@
+import { useEffect, useState } from 'react';
+import apiClient from '../../../api/axiosClient';
+import { useToast } from '../../../contexts/ToastContext';
+import { getApiErrorMessage } from '../../../utils/apiError';
+import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import { printDocument as printDoc } from '../../../utils/printDocument';
+
+interface ProductionReturn {
+  id: number;
+  returnNumber: string;
+  returnDate: string;
+  workOrderNumber: string;
+  jobCardNumber: string;
+  itemCode: string;
+  itemDescription: string;
+  batchNumber: string;
+  quantity: number;
+  uom: string;
+  originalIssueReference: string;
+  returnReason: string;
+  condition: string;
+  warehouse: string;
+  location: string;
+  status: string;
+  remarks: string;
+}
+
+const SC: Record<string, { color: string; bg: string }> = {
+  DRAFT: { color: '#888', bg: '#e9ecef' }, VERIFIED: { color: '#2563eb', bg: '#dbeafe' },
+  RECEIVED: { color: '#22c55e', bg: '#d4edda' }, CANCELLED: { color: '#991b1b', bg: '#fde2e2' },
+};
+
+export default function ProductionReturnScreen() {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<ProductionReturn[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<Record<string, unknown>>({});
+  const [editId, setEditId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProductionReturn | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState('');
+  const [tab, setTab] = useState<'list' | 'form'>('list');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await apiClient.get('/v1/production/returns');
+      setRows(Array.isArray(data) ? data : data.content ?? []);
+    } catch (e) { toast(getApiErrorMessage(e, 'Load failed.'), 'error'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    if (!String(form.itemCode ?? '').trim()) { toast('Item Code is required.', 'error'); return; }
+    setBusy(true);
+    try {
+      if (editId) { await apiClient.put(`/v1/production/returns/${editId}`, form); toast('Return updated.'); }
+      else { await apiClient.post('/v1/production/returns', form); toast('Return created.'); }
+      setForm({}); setEditId(null); setTab('list'); load();
+    } catch (e) { toast(getApiErrorMessage(e, 'Save failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const del = async () => {
+    if (!deleteTarget) return;
+    setBusy(true);
+    try { await apiClient.delete(`/v1/production/returns/${deleteTarget.id}`); toast('Deleted.'); setDeleteTarget(null); load(); }
+    catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); }
+    setBusy(false);
+  };
+
+  const action = async (id: number, act: string) => {
+    try { await apiClient.post(`/v1/production/returns/${id}/actions/${act}`); toast(`Return ${act}.`); load(); }
+    catch (e) { toast(getApiErrorMessage(e, 'Action failed.'), 'error'); }
+  };
+
+  const set = (k: string, v: unknown) => setForm((c) => ({ ...c, [k]: v }));
+
+  const printDocument = (id: number | string, mode: 'print' | 'download' = 'print') => {
+    const base = import.meta.env.VITE_API_BASE_URL || '/api';
+    printDoc(`${base}/v1/production/returns/${id}/print?download=${mode === 'download'}`, mode);
+  };
+
+  const filtered = rows.filter((r) => !search || (r.returnNumber ?? '').toLowerCase().includes(search.toLowerCase()) || (r.itemCode ?? '').toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <>
+      <div className="pg-head"><h1>Production Return</h1><p>Return unused / excess material to stores</p></div>
+
+      {tab === 'form' && (
+        <div className="panel">
+          <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Return</h2></div>
+          <div className="fgrid">
+            <label className="fld"><span>Return Date</span><input className="in" type="date" value={String(form.returnDate ?? '').slice(0, 10)} onChange={(e) => set('returnDate', e.target.value)} /></label>
+            <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
+            <label className="fld"><span>Job Card No</span><input className="in" value={String(form.jobCardNumber ?? '')} onChange={(e) => set('jobCardNumber', e.target.value)} /></label>
+            <label className="fld"><span>Item Code *</span><input className="in" value={String(form.itemCode ?? '')} onChange={(e) => set('itemCode', e.target.value)} /></label>
+            <label className="fld"><span>Item Description</span><input className="in" value={String(form.itemDescription ?? '')} onChange={(e) => set('itemDescription', e.target.value)} /></label>
+            <label className="fld"><span>Batch No</span><input className="in" value={String(form.batchNumber ?? '')} onChange={(e) => set('batchNumber', e.target.value)} /></label>
+            <label className="fld"><span>Quantity</span><input className="in" type="number" value={String(form.quantity ?? '')} onChange={(e) => set('quantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>UOM</span><input className="in" value={String(form.uom ?? '')} onChange={(e) => set('uom', e.target.value)} /></label>
+            <label className="fld"><span>Original Issue Ref</span><input className="in" value={String(form.originalIssueReference ?? '')} onChange={(e) => set('originalIssueReference', e.target.value)} /></label>
+            <label className="fld"><span>Return Reason</span><input className="in" value={String(form.returnReason ?? '')} onChange={(e) => set('returnReason', e.target.value)} /></label>
+            <label className="fld"><span>Condition</span>
+              <select className="in" value={String(form.condition ?? 'GOOD')} onChange={(e) => set('condition', e.target.value)}>
+                <option value="GOOD">Good</option><option value="DAMAGED">Damaged</option><option value="REWORKABLE">Reworkable</option><option value="SCRAP">Scrap</option>
+              </select>
+            </label>
+            <label className="fld"><span>Warehouse</span><input className="in" value={String(form.warehouse ?? '')} onChange={(e) => set('warehouse', e.target.value)} /></label>
+            <label className="fld"><span>Location</span><input className="in" value={String(form.location ?? '')} onChange={(e) => set('location', e.target.value)} /></label>
+            <label className="fld"><span>Remarks</span><input className="in" value={String(form.remarks ?? '')} onChange={(e) => set('remarks', e.target.value)} /></label>
+          </div>
+          <div className="actbar">
+            <span className="lft">{editId && <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }} disabled={busy}>Cancel</button>}</span>
+            <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }}>Back</button>
+            <button className="btn btn-p" onClick={save} disabled={busy}>{editId ? 'Update' : 'Create'}</button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'list' && (
+        <div className="panel">
+          <div className="toolbar">
+            <input className="in" placeholder="Search returns..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Return</button>
+          </div>
+          <div className="twrap">
+            {loading ? <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading...</div> : (
+              <table className="tbl">
+                <thead><tr><th>Return No</th><th>Work Order</th><th>Item Code</th><th>Qty</th><th>Reason</th><th>Condition</th><th>Status</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {filtered.length === 0 ? <tr><td colSpan={8}><div className="empty"><span className="material-symbols-rounded">description</span> No returns.</div></td></tr> : filtered.map((r) => (
+                    <tr key={r.id}>
+                      <td><b>{r.returnNumber}</b></td>
+                      <td>{r.workOrderNumber ?? '-'}</td>
+                      <td>{r.itemCode}</td>
+                      <td>{r.quantity} {r.uom}</td>
+                      <td>{r.returnReason ?? '-'}</td>
+                      <td>{r.condition ?? '-'}</td>
+                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td>
+                        {r.status === 'DRAFT' && <button className="ibtn" title="Verify" onClick={() => action(r.id, 'verify')}><span className="material-symbols-rounded">fact_check</span></button>}
+                        {r.status === 'VERIFIED' && <button className="ibtn" title="Receive" onClick={() => action(r.id, 'receive')}><span className="material-symbols-rounded">inventory_2</span></button>}
+                        <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
+                        <button className="ibtn" title="Print" onClick={() => printDocument(r.id, 'print')}><span className="material-symbols-rounded">print</span></button>
+                        <button className="ibtn" title="Download PDF" onClick={() => printDocument(r.id, 'download')}><span className="material-symbols-rounded">download</span></button>
+                        {r.status === 'DRAFT' && <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(r)}><span className="material-symbols-rounded">delete</span></button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      <ConfirmActionModal open={Boolean(deleteTarget)} title={`Delete ${deleteTarget?.returnNumber ?? ''}`} body="Permanently delete?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteTarget(null)} onConfirm={del} />
+    </>
+  );
+}

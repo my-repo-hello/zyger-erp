@@ -1,0 +1,312 @@
+import { useEffect, useState } from 'react';
+import apiClient from '../../../api/axiosClient';
+import { useToast } from '../../../contexts/ToastContext';
+import { getApiErrorMessage } from '../../../utils/apiError';
+import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+
+interface Ecr {
+  id: number;
+  changeType: string;
+  itemCode: string;
+  itemDescription: string;
+  currentRevision?: string;
+  proposedRevision?: string;
+  descriptionOfChange: string;
+  reasonForChange: string;
+  priority: string;
+  status: string;
+  effectiveDate?: string;
+  remarks?: string;
+}
+
+const PAGE_SIZE = 20;
+
+const CHANGE_TYPES = [
+  { value: 'DESIGN', label: 'Design' },
+  { value: 'DIMENSIONAL', label: 'Dimensional' },
+  { value: 'MATERIAL', label: 'Material' },
+  { value: 'PROCESS', label: 'Process' },
+  { value: 'BOM', label: 'BOM' },
+  { value: 'ROUTE', label: 'Route' },
+  { value: 'DRAWING', label: 'Drawing' },
+];
+
+const PRIORITIES = [
+  { value: 'CRITICAL', label: 'Critical', color: '#dc2626' },
+  { value: 'HIGH', label: 'High', color: '#f59e0b' },
+  { value: 'MEDIUM', label: 'Medium', color: '#3b82f6' },
+  { value: 'LOW', label: 'Low', color: '#888' },
+];
+
+const STATUS_COLORS: Record<string, { color: string; bg: string }> = {
+  RAISED:        { color: '#888',    bg: '#e9ecef' },
+  UNDER_REVIEW:  { color: '#3b82f6', bg: '#dbeafe' },
+  APPROVED:      { color: '#22c55e', bg: '#d4edda' },
+  REJECTED:      { color: '#ef4444', bg: '#f8d7da' },
+  IMPLEMENTED:   { color: '#10b981', bg: '#d1fae5' },
+  CLOSED:        { color: '#6b7280', bg: '#f3f4f6' },
+};
+
+const ACTIONABLE_STATUSES: Record<string, { label: string; action: string; icon: string }[]> = {
+  UNDER_REVIEW: [
+    { label: 'Approve', action: 'approve', icon: 'check_circle' },
+    { label: 'Reject', action: 'reject', icon: 'cancel' },
+  ],
+  APPROVED: [
+    { label: 'Implement', action: 'implement', icon: 'build' },
+  ],
+  IMPLEMENTED: [
+    { label: 'Close', action: 'close', icon: 'archive' },
+  ],
+};
+
+export default function EcrScreen() {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<Ecr[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState<Record<string, unknown>>({});
+  const [editId, setEditId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Ecr | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionTarget, setActionTarget] = useState<{ ecr: Ecr; action: string } | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await apiClient.get('/v1/planning/engineering-changes');
+      const items = Array.isArray(data) ? data : data.content ?? [];
+      setRows(items);
+      setTotal(items.length);
+    } catch (e) {
+      toast(getApiErrorMessage(e, 'Load failed.'), 'error');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    if (!String(form.changeType ?? '').trim()) { toast('Change Type is required.', 'error'); return; }
+    if (!String(form.itemCode ?? '').trim()) { toast('Item Code is required.', 'error'); return; }
+    if (!String(form.descriptionOfChange ?? '').trim()) { toast('Description of Change is required.', 'error'); return; }
+    if (!String(form.reasonForChange ?? '').trim()) { toast('Reason for Change is required.', 'error'); return; }
+    setBusy(true);
+    try {
+      if (editId) {
+        await apiClient.put(`/v1/planning/engineering-changes/${editId}`, form);
+        toast('ECR updated.');
+      } else {
+        await apiClient.post('/v1/planning/engineering-changes', form);
+        toast('ECR created.');
+      }
+      setForm({}); setEditId(null); load();
+    } catch (e) {
+      toast(getApiErrorMessage(e, 'Save failed.'), 'error');
+    }
+    setBusy(false);
+  };
+
+  const del = async () => {
+    if (!deleteTarget) return;
+    setBusy(true);
+    try {
+      await apiClient.delete(`/v1/planning/engineering-changes/${deleteTarget.id}`);
+      toast('ECR deleted.');
+      setDeleteTarget(null); load();
+    } catch (e) {
+      toast(getApiErrorMessage(e, 'Delete failed.'), 'error');
+    }
+    setBusy(false);
+  };
+
+  const executeAction = async (note: string) => {
+    if (!actionTarget) return;
+    setBusy(true);
+    try {
+      await apiClient.post(
+        `/v1/planning/engineering-changes/${actionTarget.ecr.id}/actions/${actionTarget.action}`,
+        { note }
+      );
+      toast(`ECR ${actionTarget.action}d successfully.`);
+      setActionTarget(null); load();
+    } catch (e) {
+      toast(getApiErrorMessage(e, 'Action failed.'), 'error');
+    }
+    setBusy(false);
+  };
+
+  const set = (k: string, v: unknown) => setForm((c) => ({ ...c, [k]: v }));
+
+  return (
+    <>
+      <div className="pg-head">
+        <h1>Engineering Change Requests</h1>
+        <p>Manage ECRs for engineering changes</p>
+      </div>
+
+      <div className="panel">
+        <div className="panel-h">
+          <h2>{editId ? 'Edit' : 'Add'} ECR</h2>
+        </div>
+        <div className="fgrid">
+          <label className="fld">
+            <span>Change Type *</span>
+            <select className="in" value={String(form.changeType ?? '')} onChange={(e) => set('changeType', e.target.value)}>
+              <option value="">Select...</option>
+              {CHANGE_TYPES.map((ct) => (
+                <option key={ct.value} value={ct.value}>{ct.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="fld">
+            <span>Item Code *</span>
+            <input className="in" value={String(form.itemCode ?? '')} onChange={(e) => set('itemCode', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Item Description</span>
+            <input className="in" value={String(form.itemDescription ?? '')} onChange={(e) => set('itemDescription', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Current Revision</span>
+            <input className="in" value={String(form.currentRevision ?? '')} onChange={(e) => set('currentRevision', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Proposed Revision</span>
+            <input className="in" value={String(form.proposedRevision ?? '')} onChange={(e) => set('proposedRevision', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Priority</span>
+            <select className="in" value={String(form.priority ?? 'MEDIUM')} onChange={(e) => set('priority', e.target.value)}>
+              {PRIORITIES.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="fld">
+            <span>Status</span>
+            <select className="in" value={String(form.status ?? 'RAISED')} onChange={(e) => set('status', e.target.value)}>
+              <option value="RAISED">Raised</option>
+              <option value="UNDER_REVIEW">Under Review</option>
+              <option value="APPROVED">Approved</option>
+              <option value="REJECTED">Rejected</option>
+              <option value="IMPLEMENTED">Implemented</option>
+              <option value="CLOSED">Closed</option>
+            </select>
+          </label>
+          <label className="fld">
+            <span>Effective Date</span>
+            <input className="in" type="date" value={String(form.effectiveDate ?? '')} onChange={(e) => set('effectiveDate', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Description of Change *</span>
+            <textarea className="in" rows={2} value={String(form.descriptionOfChange ?? '')} onChange={(e) => set('descriptionOfChange', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Reason for Change *</span>
+            <textarea className="in" rows={2} value={String(form.reasonForChange ?? '')} onChange={(e) => set('reasonForChange', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Remarks</span>
+            <textarea className="in" rows={2} value={String(form.remarks ?? '')} onChange={(e) => set('remarks', e.target.value)} />
+          </label>
+        </div>
+        <div className="actbar">
+          <span className="lft">
+            {editId && <button className="btn" onClick={() => { setForm({}); setEditId(null); }} disabled={busy}>Cancel</button>}
+          </span>
+          <button className="btn btn-p" onClick={save} disabled={busy}>{editId ? 'Update' : 'Create'}</button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="toolbar">
+          <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <span className="count">{total} ECRs</span>
+        </div>
+        <div className="twrap">
+          {loading ? (
+            <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading...</div>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Change Type</th>
+                  <th>Item Code</th>
+                  <th>Description</th>
+                  <th>Priority</th>
+                  <th>Status</th>
+                  <th>Effective Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr><td colSpan={7}><div className="empty"><span className="material-symbols-rounded">description</span> No ECRs found.</div></td></tr>
+                ) : rows.map((r) => {
+                  const priorityInfo = PRIORITIES.find((p) => p.value === r.priority);
+                  const actions = ACTIONABLE_STATUSES[r.status] ?? [];
+                  const sc = STATUS_COLORS[r.status] ?? { color: '#888', bg: '#e9ecef' };
+                  return (
+                    <tr key={r.id}>
+                      <td>{CHANGE_TYPES.find((ct) => ct.value === r.changeType)?.label ?? r.changeType}</td>
+                      <td>{r.itemCode}</td>
+                      <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.descriptionOfChange}</td>
+                      <td>
+                        {priorityInfo && (
+                          <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: '#fff', background: priorityInfo.color }}>
+                            {priorityInfo.label}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <span style={{ display: 'inline-block', padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: sc.color, background: sc.bg }}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td>{r.effectiveDate ?? ''}</td>
+                      <td>
+                        {actions.map((a) => (
+                          <button key={a.action} className="ibtn" title={a.label} onClick={() => setActionTarget({ ecr: r, action: a.action })}>
+                            <span className="material-symbols-rounded">{a.icon}</span>
+                          </button>
+                        ))}
+                        <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); }}>
+                          <span className="material-symbols-rounded">edit</span>
+                        </button>
+                        <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(r)}>
+                          <span className="material-symbols-rounded">delete</span>
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+        {total > PAGE_SIZE && (
+          <div className="pager">
+            <button className="btn" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>Prev</button>
+            <span className="sp">Page {page + 1} of {Math.ceil(total / PAGE_SIZE)}</span>
+            <button className="btn" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage((p) => p + 1)}>Next</button>
+          </div>
+        )}
+      </div>
+
+      <ConfirmActionModal open={Boolean(deleteTarget)} title={`Delete ECR`} body="Permanently delete this ECR?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteTarget(null)} onConfirm={del} />
+
+      <ConfirmActionModal
+        open={Boolean(actionTarget)}
+        title={actionTarget ? `${actionTarget.action.charAt(0).toUpperCase() + actionTarget.action.slice(1)} ECR` : ''}
+        body={`Are you sure you want to ${actionTarget?.action ?? ''} this ECR?`}
+        okLabel={actionTarget?.action ? actionTarget.action.charAt(0).toUpperCase() + actionTarget.action.slice(1) : 'Confirm'}
+        busy={busy}
+        onClose={() => setActionTarget(null)}
+        onConfirm={executeAction}
+      />
+    </>
+  );
+}

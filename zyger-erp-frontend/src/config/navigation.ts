@@ -1,0 +1,1157 @@
+export interface NavHeadingNode {
+  type: 'heading';
+  id: string;
+  label: string;
+  icon?: string;
+}
+
+export interface NavLeafNode {
+  type: 'item';
+  id: string;
+  label: string;
+  icon?: string;
+  tabIcon?: string;
+  screenId?: string;
+}
+
+export interface NavGroupNode {
+  type: 'group';
+  id: string;
+  label: string;
+  icon?: string;
+  children: NavNode[];
+}
+
+export type NavNode = NavHeadingNode | NavLeafNode | NavGroupNode;
+
+export interface NavTopItem {
+  id: string;
+  label: string;
+  icon: string;
+  screenId?: string;
+  align?: 'left' | 'right';
+  children?: NavNode[];
+}
+
+export const NAV_ITEMS: NavTopItem[] = [
+  {
+    id: 'dashboard',
+    label: 'Dashboard',
+    icon: 'space_dashboard',
+    screenId: 'dashboard',
+  },
+
+  {
+    id: 'master',
+    label: 'Master',
+
+
+    icon: 'database',
+    children: [
+      {
+        type: 'group',
+        id: 'master-inventory',
+        label: 'Inventory',
+        icon: 'inventory_2',
+        children: [
+          { type: 'heading', id: 'master-inventory-heading', label: 'INVENTORY', icon: 'inventory_2' },
+          {
+            type: 'group',
+            id: 'master-items',
+            label: 'Items',
+            icon: 'category',
+            children: [
+              { type: 'item', id: 'purchasable-item', label: 'Purchasable Item', icon: 'shopping_cart', screenId: 'purchasable-item', tabIcon: 'shopping_cart' },
+              { type: 'item', id: 'customer-supplied-item', label: 'Customer Supplied', icon: 'local_shipping', screenId: 'customer-supplied-item', tabIcon: 'local_shipping' },
+              { type: 'item', id: 'manufacturing-item', label: 'Manufacturing Item', icon: 'precision_manufacturing', screenId: 'manufacturing-item', tabIcon: 'precision_manufacturing' },
+            ],
+          },
+          { type: 'item', id: 'item-group-master', label: 'Item Group', icon: 'folder_special', screenId: 'item-group-master', tabIcon: 'folder_special' },
+          { type: 'item', id: 'store-master', label: 'Store Master', icon: 'warehouse', screenId: 'store-master', tabIcon: 'warehouse' },
+          {
+            type: 'group',
+            id: 'master-configurations',
+            label: 'Configurations',
+            icon: 'settings_suggest',
+            children: [
+              { type: 'item', id: 'process-master', label: 'Process', icon: 'factory', screenId: 'process-master', tabIcon: 'factory' },
+              { type: 'item', id: 'process-group-master', label: 'Process Group', icon: 'topic', screenId: 'process-group-master', tabIcon: 'topic' },
+            ],
+          },
+          { type: 'item', id: 'uom-master', label: 'UOM', icon: 'straighten', screenId: 'uom-master', tabIcon: 'straighten' },
+        ],
+      },
+      {
+        type: 'item',
+        id: 'customer-list',
+        label: 'Customer List',
+        icon: 'contacts',
+        screenId: 'customer-list',
+        tabIcon: 'contacts',
+      },
+      {
+        type: 'item',
+        id: 'supplier-list',
+        label: 'Supplier List',
+        icon: 'local_shipping',
+        screenId: 'supplier-list',
+        tabIcon: 'local_shipping',
+      },
+      {
+        type: 'item',
+        id: 'subcontractor-master',
+        label: 'Subcontractor List',
+        icon: 'engineering',
+        screenId: 'subcontractor-master',
+        tabIcon: 'engineering',
+      },
+      {
+        type: 'group',
+        id: 'master-assets',
+        label: 'Assets',
+        icon: 'precision_manufacturing',
+        children: [
+          { type: 'heading', id: 'master-assets-heading', label: 'ASSETS', icon: 'precision_manufacturing' },
+          { type: 'item', id: 'machine-master', label: 'Machine Master', icon: 'precision_manufacturing', screenId: 'machine-master', tabIcon: 'precision_manufacturing' },
+          { type: 'item', id: 'instrument-master', label: 'Instrument Master', icon: 'science', screenId: 'instrument-master', tabIcon: 'science' },
+          { type: 'item', id: 'tool-master', label: 'Tools Master', icon: 'build', screenId: 'tool-master', tabIcon: 'build' },
+        ],
+      },
+      {
+        type: 'item',
+        id: 'user-management',
+        label: 'User',
+        icon: 'manage_accounts',
+        screenId: 'user-management',
+        tabIcon: 'manage_accounts',
+      },
+      {
+        type: 'item',
+        id: 'company-info',
+        label: 'Company Info',
+        icon: 'business',
+        screenId: 'company-info',
+        tabIcon: 'business',
+      },
+    ],
+  },
+
+  {
+    id: 'crm',
+    label: 'CRM',
+    icon: 'support_agent',
+    children: [
+      {
+        type: 'item',
+        id: 'lead-management',
+        label: 'Lead Management',
+        icon: 'person_search',
+        screenId: 'lead-management',
+      },
+      {
+        type: 'item',
+        id: 'opportunity',
+        label: 'Opportunity',
+        icon: 'handshake',
+        screenId: 'opportunity',
+      },
+      {
+        type: 'item',
+        id: 'customer-master',
+        label: 'Customer Master',
+        icon: 'contacts',
+        screenId: 'customer-master',
+      },
+    ],
+  },
+
+  {
+    id: 'sales',
+    label: 'Sales',
+    icon: 'point_of_sale',
+    children: [
+      {
+        type: 'item',
+        id: 'sales-order',
+        label: 'Sales Order',
+        icon: 'shopping_cart',
+        screenId: 'sales-order',
+      },
+      {
+        type: 'item',
+        id: 'proforma-invoice',
+        label: 'Proforma Invoice (PI)',
+        icon: 'request_quote',
+        screenId: 'proforma-invoice',
+      },
+      {
+        type: 'item',
+        id: 'sales-invoice',
+        label: 'Sales Invoice',
+        icon: 'receipt_long',
+        screenId: 'sales-invoice',
+      },
+      {
+        type: 'item',
+        id: 'sales-sales-dc',
+        label: 'Sales DC',
+        icon: 'local_shipping',
+        screenId: 'sales-sales-dc',
+        tabIcon: 'local_shipping',
+      },
+      {
+        type: 'group',
+        id: 'sales-customer-return',
+        label: 'Customer Return',
+        icon: 'assignment_return',
+        children: [
+          {
+            type: 'heading',
+            id: 'sales-customer-return-heading',
+            label: 'CUSTOMER RETURN',
+            icon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'sales-customer-return-dc-return',
+            label: 'DC Return',
+            icon: 'keyboard_return',
+            screenId: 'sales-dc-return',
+            tabIcon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'sales-customer-return-invoice-return',
+            label: 'Invoice Return',
+            icon: 'receipt_long',
+            screenId: 'sales-invoice-return',
+            tabIcon: 'assignment_return',
+          },
+        ],
+      },
+    ],
+  },
+
+  {
+    id: 'purchase',
+    label: 'Purchase',
+    icon: 'shopping_bag',
+    children: [
+      {
+        type: 'item',
+        id: 'purchase-request',
+        label: 'Purchase Request',
+        icon: 'assignment',
+        screenId: 'purchase-request',
+      },
+      {
+        type: 'item',
+        id: 'supplier-enquiry',
+        label: 'Supplier Enquiry',
+        icon: 'mark_email_unread',
+        screenId: 'supplier-enquiry',
+      },
+      {
+        type: 'item',
+        id: 'supplier-quotation',
+        label: 'Supplier Quotation',
+        icon: 'request_quote',
+        screenId: 'supplier-quotation',
+      },
+      {
+        type: 'item',
+        id: 'purchase-order',
+        label: 'Purchase Order (PO)',
+        icon: 'shopping_cart_checkout',
+        screenId: 'purchase-order',
+      },
+      {
+        type: 'group',
+        id: 'purchase-schedule',
+        label: 'Purchase Schedule',
+        icon: 'calendar_month',
+        children: [
+          {
+            type: 'heading',
+            id: 'purchase-schedule-heading',
+            label: 'PURCHASE SCHEDULE',
+            icon: 'calendar_month',
+          },
+          {
+            type: 'item',
+            id: 'po-schedule',
+            label: 'PO Schedule',
+            icon: 'event_note',
+            screenId: 'po-schedule',
+          },
+          {
+            type: 'item',
+            id: 'jo-schedule',
+            label: 'JO Schedule',
+            icon: 'event_repeat',
+            screenId: 'jo-schedule',
+          },
+        ],
+      },
+      {
+        type: 'item',
+        id: 'job-order',
+        label: 'Job Order (JO)',
+        icon: 'assignment_turned_in',
+        screenId: 'job-order',
+      },
+      {
+        type: 'item',
+        id: 'purchase-target',
+        label: 'Purchase Target',
+        icon: 'track_changes',
+        screenId: 'purchase-target',
+      },
+    ],
+  },
+
+  {
+    id: 'inventory',
+    label: 'Inventory',
+    icon: 'inventory',
+    children: [
+      {
+        type: 'item',
+        id: 'inward-entry',
+        label: 'Inward Entry',
+        icon: 'move_to_inbox',
+        screenId: 'inward-entry',
+        tabIcon: 'move_to_inbox',
+      },
+
+      {
+        type: 'item',
+        id: 'stock-issue-request',
+        label: 'Stock Issue Request',
+        icon: 'assignment',
+        screenId: 'stock-issue-request',
+      },
+
+      {
+        type: 'group',
+        id: 'inventory-stock-issue',
+        label: 'Stock Issue',
+        icon: 'outbox',
+        children: [
+          {
+            type: 'heading',
+            id: 'inventory-stock-issue-heading',
+            label: 'STOCK ISSUE',
+            icon: 'outbox',
+          },
+          {
+            type: 'item',
+            id: 'rm-issue',
+            label: 'RM Issue',
+            screenId: 'rm-issue',
+            tabIcon: 'outbox',
+          },
+          {
+            type: 'item',
+            id: 'general-issue',
+            label: 'General Issue',
+            screenId: 'general-issue',
+            tabIcon: 'outbox',
+          },
+          {
+            type: 'item',
+            id: 'jo-dc-issue',
+            label: 'JO DC',
+            screenId: 'jo-dc-issue',
+            tabIcon: 'outbox',
+          },
+          {
+            type: 'item',
+            id: 'issue-internal-external',
+            label: 'Issue Internal / External',
+            icon: 'outbox',
+            screenId: 'issue-internal-external',
+            tabIcon: 'outbox',
+          },
+
+
+          {
+            type: 'item',
+            id: 'issue-against-receipt',
+            label: 'Issue Against Receipt',
+            screenId: 'issue-against-receipt',
+            tabIcon: 'outbox',
+          },
+        ],
+      },
+
+      {
+        type: 'group',
+        id: 'inventory-delivery-challan',
+        label: 'Delivery Challan',
+        icon: 'local_shipping',
+        children: [
+          {
+            type: 'heading',
+            id: 'inventory-delivery-challan-heading',
+            label: 'DELIVERY CHALLAN',
+            icon: 'local_shipping',
+          },
+          {
+            type: 'item',
+            id: 'inventory-sales-dc',
+            label: 'Sales DC',
+            screenId: 'sales-dc',
+            tabIcon: 'local_shipping',
+          },
+          {
+            type: 'item',
+            id: 'inventory-jo-dc',
+            label: 'JO DC',
+            screenId: 'jo-dc',
+            tabIcon: 'local_shipping',
+          },
+          {
+            type: 'item',
+            id: 'general-dc',
+            label: 'General DC',
+            screenId: 'general-dc',
+            tabIcon: 'local_shipping',
+          },
+          {
+            type: 'item',
+            id: 'return-dc',
+            label: 'Return DC',
+            screenId: 'return-dc',
+            tabIcon: 'local_shipping',
+          },
+          {
+            type: 'item',
+            id: 'transfer-dc',
+            label: 'Transfer DC',
+            screenId: 'transfer-dc',
+            tabIcon: 'local_shipping',
+          },
+        ],
+      },
+
+      {
+        type: 'group',
+        id: 'inventory-return-management',
+        label: 'Return Management',
+        icon: 'assignment_return',
+        children: [
+          {
+            type: 'heading',
+            id: 'inventory-return-management-heading',
+            label: 'RETURN MANAGEMENT',
+            icon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'inward-return',
+            label: 'Inward Return',
+            screenId: 'inward-return',
+            tabIcon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'inventory-dc-return',
+            label: 'DC Return',
+            screenId: 'dc-return',
+            tabIcon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'inventory-invoice-return',
+            label: 'Invoice Return',
+            screenId: 'invoice-return',
+            tabIcon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'internal-return',
+            label: 'Internal Return',
+            screenId: 'internal-return',
+            tabIcon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'received-against-issue',
+            label: 'Received Against Issue',
+            screenId: 'received-against-issue',
+            tabIcon: 'assignment_return',
+          },
+          {
+            type: 'item',
+            id: 'receipt-return',
+            label: 'Receipt Return',
+            screenId: 'receipt-return',
+            tabIcon: 'assignment_return',
+          },
+        ],
+      },
+
+      {
+        type: 'group',
+        id: 'inventory-allotment',
+        label: 'Allotment',
+        icon: 'assignment_turned_in',
+        children: [
+          {
+            type: 'heading',
+            id: 'inventory-allotment-heading',
+            label: 'ALLOTMENT',
+            icon: 'assignment_turned_in',
+          },
+          {
+            type: 'item',
+            id: 'stock-allotment',
+            label: 'Stock Allotment',
+            screenId: 'stock-allotment',
+            tabIcon: 'assignment_turned_in',
+          },
+          {
+            type: 'item',
+            id: 'stock-release',
+            label: 'Stock Release',
+            screenId: 'stock-release',
+            tabIcon: 'assignment_turned_in',
+          },
+        ],
+      },
+
+      {
+        type: 'group',
+        id: 'inventory-adjustment',
+        label: 'Adjustment',
+        icon: 'edit_note',
+        children: [
+          {
+            type: 'heading',
+            id: 'inventory-adjustment-heading',
+            label: 'ADJUSTMENT',
+            icon: 'edit_note',
+          },
+          {
+            type: 'item',
+            id: 'stock-amendment',
+            label: 'Stock Amendment',
+            screenId: 'stock-amendment',
+            tabIcon: 'edit_note',
+          },
+          {
+            type: 'item',
+            id: 'physical-stock-amendment',
+            label: 'Physical Stock Amendment',
+            screenId: 'physical-stock-amendment',
+            tabIcon: 'edit_note',
+          },
+        ],
+      },
+
+      {
+        type: 'item',
+        id: 'inventory-store-receipt',
+        label: 'Store Receipt (GRN)',
+        icon: 'warehouse',
+        screenId: 'grn',
+        tabIcon: 'warehouse',
+      },
+
+      {
+        type: 'item',
+        id: 'inventory-reports',
+        label: 'Inventory Reports',
+        icon: 'monitoring',
+        screenId: 'reports',
+      },
+    ],
+  },
+
+  {
+    id: 'planning',
+    label: 'Planning',
+    icon: 'event_note',
+    children: [
+      {
+        type: 'item',
+        id: 'work-order',
+        label: 'Work Order',
+        icon: 'assignment',
+        screenId: 'work-order',
+      },
+      {
+        type: 'item',
+        id: 'production-bom',
+        label: 'Production BOM',
+        icon: 'account_tree',
+        screenId: 'production-bom',
+      },
+      {
+        type: 'item',
+        id: 'route-sheet',
+        label: 'Route Sheet',
+        icon: 'route',
+        screenId: 'route-sheet',
+      },
+      {
+        type: 'item',
+        id: 'material-planning',
+        label: 'Material Planning',
+        icon: 'inventory_2',
+        screenId: 'material-planning',
+      },
+      {
+        type: 'item',
+        id: 'fg-possible',
+        label: 'FG Possible',
+        icon: 'check_circle',
+        screenId: 'fg-possible',
+      },
+      {
+        type: 'item',
+        id: 'dispatch-plan',
+        label: 'Dispatch Plan',
+        icon: 'local_shipping',
+        screenId: 'dispatch-plan',
+      },
+      {
+        type: 'item',
+        id: 'machine-load',
+        label: 'Machine Load Plan',
+        icon: 'bar_chart',
+        screenId: 'machine-load',
+      },
+      {
+        type: 'item',
+        id: 'engineering-change',
+        label: 'Request (ECR)',
+        icon: 'change_circle',
+        screenId: 'engineering-change',
+      },
+      {
+        type: 'item',
+        id: 'gap-analysis',
+        label: 'Gap Analysis',
+        icon: 'analytics',
+        screenId: 'gap-analysis',
+      },
+      {
+        type: 'item',
+        id: 'cost-estimation',
+        label: 'Cost Estimation – Old',
+        icon: 'calculate',
+        screenId: 'cost-estimation',
+      },
+    ],
+  },
+
+  {
+    id: 'production',
+    label: 'Production',
+    icon: 'precision_manufacturing',
+    children: [
+      {
+        type: 'item',
+        id: 'job-card',
+        label: 'Job Card',
+        icon: 'assignment',
+        screenId: 'job-card',
+      },
+      {
+        type: 'item',
+        id: 'production-entry',
+        label: 'Production Entry',
+        icon: 'precision_manufacturing',
+        screenId: 'production-entry',
+      },
+      {
+        type: 'item',
+        id: 'product-conversion',
+        label: 'Product Conversion',
+        icon: 'swap_horiz',
+        screenId: 'product-conversion',
+      },
+      {
+        type: 'item',
+        id: 'production-return',
+        label: 'Production Return',
+        icon: 'replay',
+        screenId: 'production-return',
+      },
+      {
+        type: 'item',
+        id: 'production-log',
+        label: 'Production Log Sheet',
+        icon: 'list_alt',
+        screenId: 'production-log',
+      },
+      {
+        type: 'item',
+        id: 'shop-floor-entry',
+        label: 'Shop Floor Entry',
+        icon: 'engineering',
+        screenId: 'shop-floor-entry',
+      },
+      {
+        type: 'item',
+        id: 'idle-time',
+        label: 'Idle Time',
+        icon: 'schedule',
+        screenId: 'idle-time',
+      },
+      {
+        type: 'item',
+        id: 'production-pending',
+        label: 'Production Pending',
+        icon: 'pending_actions',
+        screenId: 'production-pending',
+      },
+    ],
+  },
+
+  {
+    id: 'quality',
+    label: 'Quality',
+    icon: 'verified',
+    align: 'right',
+    children: [
+      {
+        type: 'group',
+        id: 'quality-inspection',
+        label: 'Inspection',
+        icon: 'fact_check',
+        children: [
+          {
+            type: 'heading',
+            id: 'quality-inspection-heading',
+            label: 'INSPECTION',
+            icon: 'fact_check',
+          },
+
+          {
+            type: 'group',
+            id: 'quality-inward-inspection',
+            label: 'Inward Inspection',
+            icon: 'move_to_inbox',
+            children: [
+              {
+                type: 'item',
+                id: 'inward-inspection-iqc',
+                label: 'Inward Inspection (IQC)',
+                icon: 'fact_check',
+                screenId: 'inward-inspection-iqc',
+              },
+              {
+                type: 'item',
+                id: 'lo-inspection',
+                label: 'LO Inspection',
+                icon: 'construction',
+                screenId: 'lo-inspection',
+              },
+            ],
+          },
+
+          {
+            type: 'item',
+            id: 'jomin-inspection',
+            label: 'JOMIN Inspection',
+            icon: 'inventory_2',
+            screenId: 'jomin-inspection',
+          },
+
+          {
+            type: 'group',
+            id: 'quality-process-inspection',
+            label: 'Process Inspection',
+            icon: 'settings',
+            children: [
+              {
+                type: 'item',
+                id: 'process-inspection-ipqc',
+                label: 'Process Inspection (IPQC)',
+                icon: 'analytics',
+                screenId: 'process-inspection-ipqc',
+              },
+              {
+                type: 'item',
+                id: 'first-inspection',
+                label: 'First Inspection (FAI)',
+                icon: 'first_page',
+                screenId: 'first-inspection',
+              },
+              {
+                type: 'item',
+                id: 'line-inspection',
+                label: 'Line Inspection',
+                icon: 'timeline',
+                screenId: 'line-inspection',
+              },
+              {
+                type: 'item',
+                id: 'last-off-inspection',
+                label: 'Last Off Inspection',
+                icon: 'last_page',
+                screenId: 'last-off-inspection',
+              },
+            ],
+          },
+
+          {
+            type: 'item',
+            id: 'final-inspection',
+            label: 'Final Inspection',
+            icon: 'task_alt',
+            screenId: 'final-inspection',
+          },
+          {
+            type: 'item',
+            id: 'inspection-pending',
+            label: 'Inspection Pending',
+            icon: 'pending_actions',
+            screenId: 'inspection-pending',
+          },
+        ],
+      },
+
+      {
+        type: 'group',
+        id: 'quality-test-certificate',
+        label: 'Test Certificate',
+        icon: 'description',
+        children: [
+          {
+            type: 'heading',
+            id: 'quality-test-certificate-heading',
+            label: 'TEST CERTIFICATE',
+            icon: 'description',
+          },
+          {
+            type: 'item',
+            id: 'inward-test-certificate',
+            label: 'Inward Test Certificate',
+            icon: 'move_to_inbox',
+            screenId: 'inward-test-certificate',
+          },
+          {
+            type: 'item',
+            id: 'internal-test-certificate',
+            label: 'Internal Test Certificate',
+            icon: 'domain',
+            screenId: 'internal-test-certificate',
+          },
+          {
+            type: 'item',
+            id: 'outward-test-certificate',
+            label: 'Outward Test Certificate',
+            icon: 'outbox',
+            screenId: 'outward-test-certificate',
+          },
+        ],
+      },
+
+      {
+        type: 'item',
+        id: 'concession-entry',
+        label: 'Concession Entry',
+        icon: 'edit_document',
+        screenId: 'concession-entry',
+      },
+
+      {
+        type: 'item',
+        id: 'quality-ncr',
+        label: 'Non-Conformance Report',
+        icon: 'report',
+        screenId: 'quality-ncr',
+      },
+
+      {
+        type: 'group',
+        id: 'quality-problem-solving',
+        label: 'Complaint & Problem Solving',
+        icon: 'report_problem',
+        children: [
+          {
+            type: 'heading',
+            id: 'quality-problem-solving-heading',
+            label: 'PROBLEM SOLVING',
+            icon: 'report_problem',
+          },
+          {
+            type: 'item',
+            id: 'customer-complaint',
+            label: 'Customer Complaint',
+            icon: 'support_agent',
+            screenId: 'customer-complaint',
+          },
+          {
+            type: 'item',
+            id: 'capa',
+            label: 'CAPA',
+            icon: 'published_with_changes',
+            screenId: 'capa',
+          },
+          {
+            type: 'item',
+            id: 'eight-d-report',
+            label: '8D Report',
+            icon: 'article',
+            screenId: 'eight-d-report',
+          },
+        ],
+      },
+
+      {
+        type: 'group',
+        id: 'quality-calibration',
+        label: 'Calibration',
+        icon: 'straighten',
+        children: [
+          {
+            type: 'heading',
+            id: 'quality-calibration-heading',
+            label: 'CALIBRATION',
+            icon: 'straighten',
+          },
+          {
+            type: 'item',
+            id: 'calibration',
+            label: 'Calibration Instruments',
+            icon: 'straighten',
+            screenId: 'calibration',
+          },
+          {
+            type: 'item',
+            id: 'calibration-record',
+            label: 'Calibration Record',
+            icon: 'description',
+            screenId: 'calibration-record',
+          },
+        ],
+      },
+    ],
+  },
+
+  {
+    id: 'maintenance',
+    label: 'Maintenance',
+    icon: 'build',
+    align: 'right',
+    children: [
+      {
+        type: 'item',
+        id: 'maintenance-dashboard',
+        label: 'Maintenance Dashboard',
+        icon: 'space_dashboard',
+        screenId: 'maintenance-dashboard',
+      },
+      {
+        type: 'group',
+        id: 'maintenance-breakdown',
+        label: 'Breakdown',
+        icon: 'report_problem',
+        children: [
+          {
+            type: 'heading',
+            id: 'maintenance-breakdown-heading',
+            label: 'BREAKDOWN',
+            icon: 'report_problem',
+          },
+          {
+            type: 'item',
+            id: 'breakdown-intimation',
+            label: 'Breakdown Intimation',
+            icon: 'warning',
+            screenId: 'breakdown-intimation',
+          },
+          {
+            type: 'item',
+            id: 'breakdown-rectification',
+            label: 'Breakdown Rectification',
+            icon: 'build',
+            screenId: 'breakdown-rectification',
+          },
+        ],
+      },
+      {
+        type: 'group',
+        id: 'maintenance-pm',
+        label: 'Preventive Maintenance',
+        icon: 'schedule',
+        children: [
+          {
+            type: 'heading',
+            id: 'maintenance-pm-heading',
+            label: 'PREVENTIVE MAINTENANCE',
+            icon: 'schedule',
+          },
+          {
+            type: 'item',
+            id: 'pm-plan',
+            label: 'PM Plan',
+            icon: 'assignment',
+            screenId: 'pm-plan',
+          },
+          {
+            type: 'item',
+            id: 'pm-schedule',
+            label: 'PM Schedule',
+            icon: 'event_note',
+            screenId: 'pm-schedule',
+          },
+          {
+            type: 'item',
+            id: 'pm-completion',
+            label: 'PM Completion',
+            icon: 'task_alt',
+            screenId: 'pm-completion',
+          },
+        ],
+      },
+      {
+        type: 'group',
+        id: 'maintenance-tools',
+        label: 'Tools Management',
+        icon: 'handyman',
+        children: [
+          {
+            type: 'heading',
+            id: 'maintenance-tools-heading',
+            label: 'TOOLS MANAGEMENT',
+            icon: 'handyman',
+          },
+          {
+            type: 'item',
+            id: 'tool-service-intimation',
+            label: 'Tool Service Intimation',
+            icon: 'report',
+            screenId: 'tool-service-intimation',
+          },
+          {
+            type: 'item',
+            id: 'tool-service-rectification',
+            label: 'Tool Service Rectification',
+            icon: 'construction',
+            screenId: 'tool-service-rectification',
+          },
+        ],
+      },
+      {
+        type: 'group',
+        id: 'maintenance-calibration',
+        label: 'Calibration',
+        icon: 'straighten',
+        children: [
+          {
+            type: 'heading',
+            id: 'maintenance-calibration-heading',
+            label: 'CALIBRATION',
+            icon: 'straighten',
+          },
+          {
+            type: 'item',
+            id: 'calibration-schedule',
+            label: 'Calibration Schedule',
+            icon: 'calendar_month',
+            screenId: 'calibration-schedule',
+          },
+          {
+            type: 'item',
+            id: 'calibration-entry',
+            label: 'Calibration Entry',
+            icon: 'edit_document',
+            screenId: 'calibration-entry',
+          },
+        ],
+      },
+      {
+        type: 'group',
+        id: 'maintenance-utilities',
+        label: 'Utilities',
+        icon: 'electric_bolt',
+        children: [
+          {
+            type: 'heading',
+            id: 'maintenance-utilities-heading',
+            label: 'UTILITIES',
+            icon: 'electric_bolt',
+          },
+          {
+            type: 'item',
+            id: 'power-consumption',
+            label: 'Power Consumption',
+            icon: 'bolt',
+            screenId: 'power-consumption',
+          },
+          {
+            type: 'item',
+            id: 'water-consumption',
+            label: 'Water Consumption',
+            icon: 'water_drop',
+            screenId: 'water-consumption',
+          },
+        ],
+      },
+      {
+        type: 'group',
+        id: 'maintenance-analysis',
+        label: 'Analysis',
+        icon: 'analytics',
+        children: [
+          {
+            type: 'heading',
+            id: 'maintenance-analysis-heading',
+            label: 'ANALYSIS',
+            icon: 'analytics',
+          },
+          {
+            type: 'item',
+            id: 'rca',
+            label: 'Root Cause Analysis',
+            icon: 'account_tree',
+            screenId: 'rca',
+          },
+          {
+            type: 'item',
+            id: 'maintenance-analysis-view',
+            label: 'Downtime / MTBF / MTTR',
+            icon: 'monitoring',
+            screenId: 'maintenance-analysis-view',
+          },
+        ],
+      },
+      {
+        type: 'item',
+        id: 'maintenance-reports',
+        label: 'Reports',
+        icon: 'assessment',
+        screenId: 'maintenance-reports',
+      },
+    ],
+  },
+
+  {
+    id: 'reports-menu',
+    label: 'Reports',
+    icon: 'monitoring',
+    align: 'right',
+    children: [
+      {
+        type: 'item',
+        id: 'reports-inventory-reports',
+        label: 'Inventory Reports',
+        icon: 'inventory',
+        screenId: 'reports',
+      },
+      {
+        type: 'item',
+        id: 'business-reports',
+        label: 'Business Reports',
+        icon: 'bar_chart',
+        screenId: 'business-reports',
+      },
+    ],
+  },
+];
