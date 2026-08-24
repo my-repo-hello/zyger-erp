@@ -1,5 +1,6 @@
 package in.zygertechnology.zygererp.security;
 
+import in.zygertechnology.zygererp.service.RbacService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,14 +12,20 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
 
     private final JwtService jwt;
+    private final RbacService rbacService;
 
-    public JwtAuthFilter(JwtService jwt) { this.jwt = jwt; }
+    public JwtAuthFilter(JwtService jwt, RbacService rbacService) {
+        this.jwt = jwt;
+        this.rbacService = rbacService;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -30,9 +37,20 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             if (jwt.isValid(token) && SecurityContextHolder.getContext().getAuthentication() == null) {
                 String username = jwt.username(token);
                 String role = jwt.role(token);
-                List<SimpleGrantedAuthority> authorities = List.of(
-                    new SimpleGrantedAuthority("ROLE_" + (role != null ? role : "USER"))
-                );
+
+                List<SimpleGrantedAuthority> authorities = new ArrayList<>();
+
+                // Add legacy role authority
+                if (role != null && !role.isBlank()) {
+                    authorities.add(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()));
+                }
+
+                // Load RBAC permissions from database
+                Set<String> permissionCodes = rbacService.getUserPermissionsWithWildcards(username);
+                for (String code : permissionCodes) {
+                    authorities.add(new SimpleGrantedAuthority("PERM_" + code));
+                }
+
                 UsernamePasswordAuthenticationToken auth =
                         new UsernamePasswordAuthenticationToken(username, null, authorities);
                 SecurityContextHolder.getContext().setAuthentication(auth);

@@ -6,6 +6,7 @@ public class GrnLine extends BaseLine implements LineEntity {
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="doc_id") @JsonIgnore
     Grn doc;
     BigDecimal acceptedQty;
+    BigDecimal inspectedQty;
     BigDecimal rate;
     BigDecimal rejectedQty;
     public BigDecimal getQty(){ return acceptedQty; }

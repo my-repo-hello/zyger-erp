@@ -30,6 +30,9 @@ public class SalesOrderItem extends BaseLine implements LineEntity {
     @Column(name="inspection_requirement", length=200) String inspectionRequirement;
     @Column(name="certificate_requirement", length=200) String certificateRequirement;
     @Column(name="packing_requirement", length=200) String packingRequirement;
+    @Column(name="surface_finish_requirement", length=200) String surfaceFinishRequirement;
+    @Column(name="heat_treatment_required") Boolean heatTreatmentRequired = false;
+    @Column(name="certificate_required", length=50) String certificateRequired;
 
     @Override public BigDecimal getQty() { return orderQty == null ? BigDecimal.ZERO : orderQty; }
     @Override public BigDecimal getRate() { return unitPrice; }

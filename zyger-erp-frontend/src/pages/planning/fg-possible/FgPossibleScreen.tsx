@@ -37,7 +37,7 @@ export default function FgPossibleScreen() {
     if (!itemCode.trim()) { toast('Item code is required.', 'error'); return; }
     setBusy(true);
     try {
-      const { data: itemData } = await apiClient.get(`/api/master/items?search=${encodeURIComponent(itemCode.trim())}`);
+      const { data: itemData } = await apiClient.get(`/master/items?search=${encodeURIComponent(itemCode.trim())}`);
       const items = itemData.content ?? itemData ?? [];
       const found = items.find((it: { code: string }) => it.code === itemCode.trim());
 

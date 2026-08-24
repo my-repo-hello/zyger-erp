@@ -76,6 +76,9 @@ public class MaterialPlanLine {
     @Column(name = "action_status", length = 30)
     private String actionStatus;
 
+    @Column(length = 20)
+    private String priority;
+
     @Column(length = 200)
     private String remarks;
 

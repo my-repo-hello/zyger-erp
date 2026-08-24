@@ -3,6 +3,7 @@ package in.zygertechnology.zygererp.controller;
 import in.zygertechnology.zygererp.service.DocumentFacade;
 import in.zygertechnology.zygererp.service.ExportService;
 import in.zygertechnology.zygererp.service.PrintService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -13,6 +14,7 @@ import java.security.Principal;
 import java.util.*;
 
 @RestController @RequestMapping("/api/inventory") @RequiredArgsConstructor
+@RequirePermission(module = "INVENTORY", screen = "*", action = "VIEW")
 public class DocumentController {
 
     private final DocumentFacade svc;
@@ -93,8 +95,10 @@ public class DocumentController {
             "/return-management/{type}/{id}/actions/{action}", "/allotment/{type}/{id}/actions/{action}",
             "/adjustment/{type}/{id}/actions/{action}", "/store-receipt/{type}/{id}/actions/{action}"})
     Map<String, Object> act(@PathVariable String type, @PathVariable Long id, @PathVariable String action,
-                            @RequestBody(required = false) Map<String, String> b, Principal p) {
-        return svc.toRow(svc.action(type, id, action, b == null ? "" : b.getOrDefault("note", ""), principalName(p)));
+                            @RequestBody(required = false) Map<String, Object> b, Principal p) {
+        Map<String, Object> opts = b == null ? Map.of() : b;
+        String note = String.valueOf(opts.getOrDefault("note", ""));
+        return svc.toRow(svc.action(type, id, action, note, principalName(p), opts));
     }
 
     @GetMapping({

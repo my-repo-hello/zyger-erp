@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../../../contexts/AuthContext';
 import axiosClient from '../../../api/axiosClient';
 import StatusBadge from '../../../components/common/StatusBadge';
 import { useTabs } from '../../../contexts/TabsContext';
 import { useToast } from '../../../contexts/ToastContext';
 import PurchaseOrderPage from '../order/PurchaseOrderPage';
 import { logSystemActivity } from '../../../utils/activityLog';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface ScheduleRow {
   id?: number;
@@ -31,6 +33,7 @@ interface ScheduleRow {
 export default function PoSchedulePage() {
   const { openTab } = useTabs();
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const [schedules, setSchedules] = useState<ScheduleRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -134,93 +137,11 @@ export default function PoSchedulePage() {
           });
         }
 
-        if (list.length === 0) {
-          list.push(
-            {
-              id: 1,
-              poNo: 'PO-2026-0001',
-              refDocNo: 'QUOT-2026-0001',
-              supplier: 'Tata Steel Ltd',
-              supplierCode: 'SUPP-001',
-              itemCode: 'ITEM-001',
-              itemDescription: 'Precision CNC Shaft 25mm',
-              uom: 'PCS',
-              unitPrice: 450,
-              totalAmount: 112500,
-              scheduledQty: 250,
-              scheduledDate: '2026-02-25',
-              receivedQty: 100,
-              pendingQty: 150,
-              location: 'MAIN - Main Warehouse',
-              priority: 'HIGH',
-              status: 'PARTIALLY_RECEIVED',
-            },
-            {
-              id: 2,
-              poNo: 'PO-2026-0002',
-              refDocNo: 'QUOT-2026-0002',
-              supplier: 'Apex Fasteners',
-              supplierCode: 'SUPP-002',
-              itemCode: 'ITEM-002',
-              itemDescription: 'Hex Head Bolt M10 x 50mm',
-              uom: 'NOS',
-              unitPrice: 25,
-              totalAmount: 12500,
-              scheduledQty: 500,
-              scheduledDate: '2026-03-01',
-              receivedQty: 0,
-              pendingQty: 500,
-              location: 'STORE-01 - Raw Material Store',
-              priority: 'NORMAL',
-              status: 'PLANNED',
-            }
-          );
-        }
-
         setSchedules(list);
         setLoading(false);
       })
       .catch(() => {
-        setSchedules([
-          {
-            id: 1,
-            poNo: 'PO-2026-0001',
-            refDocNo: 'QUOT-2026-0001',
-            supplier: 'Tata Steel Ltd',
-            supplierCode: 'SUPP-001',
-            itemCode: 'ITEM-001',
-            itemDescription: 'Precision CNC Shaft 25mm',
-            uom: 'PCS',
-            unitPrice: 450,
-            totalAmount: 112500,
-            scheduledQty: 250,
-            scheduledDate: '2026-02-25',
-            receivedQty: 100,
-            pendingQty: 150,
-            location: 'MAIN - Main Warehouse',
-            priority: 'HIGH',
-            status: 'PARTIALLY_RECEIVED',
-          },
-          {
-            id: 2,
-            poNo: 'PO-2026-0002',
-            refDocNo: 'QUOT-2026-0002',
-            supplier: 'Apex Fasteners',
-            supplierCode: 'SUPP-002',
-            itemCode: 'ITEM-002',
-            itemDescription: 'Hex Head Bolt M10 x 50mm',
-            uom: 'NOS',
-            unitPrice: 25,
-            totalAmount: 12500,
-            scheduledQty: 500,
-            scheduledDate: '2026-03-01',
-            receivedQty: 0,
-            pendingQty: 500,
-            location: 'STORE-01 - Raw Material Store',
-            priority: 'NORMAL',
-            status: 'PLANNED',
-          },
-        ]);
+        setSchedules([]);
         setLoading(false);
       });
 
@@ -234,23 +155,13 @@ export default function PoSchedulePage() {
       if (suppRes.status === 'fulfilled' && Array.isArray(suppRes.value.data)) {
         setSuppliers(suppRes.value.data);
       } else {
-        setSuppliers([
-          { code: 'SUPP-001', name: 'Tata Steel Ltd', contactPerson: 'Sanjay Kumar', phone: '9876543210' },
-          { code: 'SUPP-002', name: 'Apex Fasteners', contactPerson: 'Rajesh Sharma', phone: '9822011223' },
-          { code: 'SUPP-003', name: 'Mahindra Steel Suppliers', contactPerson: 'Vikram Mehta', phone: '9711099887' },
-          { code: 'SUPP-004', name: 'Precision Tools Corp', contactPerson: 'Anil Patel', phone: '9900112233' },
-        ]);
+        setSuppliers([]);
       }
 
       if (itemRes.status === 'fulfilled' && Array.isArray(itemRes.value.data)) {
         setItems(itemRes.value.data);
       } else {
-        setItems([
-          { code: 'ITEM-001', name: 'Precision CNC Shaft 25mm', uom: 'PCS', price: 450 },
-          { code: 'ITEM-002', name: 'Hex Head Bolt M10 x 50mm', uom: 'NOS', price: 25 },
-          { code: 'ITEM-003', name: 'High Speed Steel Drill Bits 12mm', uom: 'SET', price: 850 },
-          { code: 'ITEM-004', name: 'Cold Rolled Steel Sheet 2mm', uom: 'SHEET', price: 1200 },
-        ]);
+        setItems([]);
       }
 
       const refs: any[] = [];
@@ -261,13 +172,13 @@ export default function PoSchedulePage() {
             id: `QUOT-${q.docNo}`,
             docNo: q.docNo,
             type: 'Supplier Quotation',
-            supplier: q.supplier || 'Tata Steel Ltd',
-            supplierCode: q.supplierCode || 'SUPP-001',
-            itemCode: l0.itemCode || 'ITEM-001',
-            itemDescription: l0.description || l0.itemName || l0.itemDesc || 'Precision CNC Shaft 25mm',
-            qty: Number(l0.orderQty || l0.qty || 100),
-            uom: l0.uom || 'PCS',
-            unitPrice: Number(l0.unitPrice || l0.rate || 450),
+            supplier: q.supplier || '',
+            supplierCode: q.supplierCode || '',
+            itemCode: l0.itemCode || '',
+            itemDescription: l0.description || l0.itemName || l0.itemDesc || '',
+            qty: Number(l0.orderQty || l0.qty || 0),
+            uom: l0.uom || '',
+            unitPrice: Number(l0.unitPrice || l0.rate || 0),
           });
         });
       }
@@ -278,24 +189,17 @@ export default function PoSchedulePage() {
             id: `PO-${p.docNo}`,
             docNo: p.docNo,
             type: 'Purchase Order',
-            supplier: p.supplier || 'Tata Steel Ltd',
-            supplierCode: p.supplierCode || 'SUPP-001',
-            itemCode: l0.itemCode || 'ITEM-001',
-            itemDescription: l0.description || l0.itemName || l0.itemDesc || 'Precision Component',
-            qty: Number(l0.orderQty || l0.qty || 100),
-            uom: l0.uom || 'PCS',
-            unitPrice: Number(l0.unitPrice || l0.rate || 450),
+            supplier: p.supplier || '',
+            supplierCode: p.supplierCode || '',
+            itemCode: l0.itemCode || '',
+            itemDescription: l0.description || l0.itemName || l0.itemDesc || '',
+            qty: Number(l0.orderQty || l0.qty || 0),
+            uom: l0.uom || '',
+            unitPrice: Number(l0.unitPrice || l0.rate || 0),
           });
         });
       }
 
-      if (refs.length === 0) {
-        refs.push(
-          { id: 'REF-1', docNo: 'QUOT-2026-0001', type: 'Supplier Quotation', supplier: 'Tata Steel Ltd', supplierCode: 'SUPP-001', itemCode: 'ITEM-001', itemDescription: 'Precision CNC Shaft 25mm', qty: 250, uom: 'PCS', unitPrice: 450 },
-          { id: 'REF-2', docNo: 'QUOT-2026-0002', type: 'Supplier Quotation', supplier: 'Apex Fasteners', supplierCode: 'SUPP-002', itemCode: 'ITEM-002', itemDescription: 'Hex Head Bolt M10 x 50mm', qty: 500, uom: 'NOS', unitPrice: 25 },
-          { id: 'REF-3', docNo: 'PO-2026-0001', type: 'Purchase Order', supplier: 'Mahindra Steel Suppliers', supplierCode: 'SUPP-003', itemCode: 'ITEM-003', itemDescription: 'Cold Rolled Steel Sheet 2mm', qty: 150, uom: 'SHEET', unitPrice: 1200 }
-        );
-      }
       setReferenceDocs(refs);
     }).catch(() => {});
   }, []);
@@ -414,7 +318,7 @@ export default function PoSchedulePage() {
       activity: `Scheduled PO Delivery (${created.poNo})`,
       refNo: created.poNo,
       party: created.supplier,
-      user: 'Sanjai M',
+      user: user?.username || 'Unknown',
       status: 'PLANNED',
     });
 
@@ -547,6 +451,36 @@ export default function PoSchedulePage() {
               style={{ width: '280px' }}
             />
           </div>
+          <button
+            className="ibtn"
+            title="Export CSV"
+            onClick={() =>
+              exportToCsv(
+                filtered as unknown as Record<string, unknown>[],
+                [
+                  { key: 'poNo', label: 'PO / Ref No' },
+                  { key: 'refDocNo', label: 'Ref Doc No' },
+                  { key: 'supplier', label: 'Supplier' },
+                  { key: 'supplierCode', label: 'Supplier Code' },
+                  { key: 'itemCode', label: 'Item Code' },
+                  { key: 'itemDescription', label: 'Item Description' },
+                  { key: 'uom', label: 'UOM' },
+                  { key: 'unitPrice', label: 'Unit Price' },
+                  { key: 'scheduledQty', label: 'Scheduled Qty' },
+                  { key: 'totalAmount', label: 'Est Amount' },
+                  { key: 'scheduledDate', label: 'Scheduled Date' },
+                  { key: 'receivedQty', label: 'Received Qty' },
+                  { key: 'pendingQty', label: 'Pending Qty' },
+                  { key: 'location', label: 'Location' },
+                  { key: 'priority', label: 'Priority' },
+                  { key: 'status', label: 'Status' },
+                ],
+                'po-delivery-schedules'
+              )
+            }
+          >
+            <span className="material-symbols-rounded">download</span>
+          </button>
           <span className="count">{filtered.length} schedules</span>
         </div>
 

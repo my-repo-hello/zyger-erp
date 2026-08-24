@@ -11,6 +11,7 @@ import { getApiErrorMessage } from '../../../../utils/apiError';
 import { useToast } from '../../../../contexts/ToastContext';
 import StatusBadge from '../../../../components/common/StatusBadge';
 import ConfirmActionModal from '../../../../components/common/ConfirmActionModal';
+import { exportToCsv } from '../../../../utils/csvExport';
 
 const PAGE_SIZE = 8;
 
@@ -218,6 +219,31 @@ export default function PoInwardList({
           </span>
 
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              className="ibtn"
+              title="Export CSV"
+              onClick={() =>
+                exportToCsv(
+                  rows as unknown as Record<string, unknown>[],
+                  COLUMNS.map((c) => ({
+                    key: c.field,
+                    label: c.label,
+                    render: (value: unknown, row: PoInwardListRowDto) =>
+                      c.field === 'date'
+                        ? formatDate(row.date)
+                        : c.field === 'firstRate' || c.field === 'totalAmount'
+                          ? String(formatMoney(Number(value ?? 0)))
+                          : c.field === 'totalQty'
+                            ? String(formatNumber(Number(value ?? 0)))
+                            : String(value ?? ''),
+                  })),
+                  'po-inward'
+                )
+              }
+            >
+              <span className="material-symbols-rounded">download</span>
+            </button>
+
             <button className="btn" onClick={() => handleExport('xlsx')}>
               <span className="material-symbols-rounded">download</span>
               Excel

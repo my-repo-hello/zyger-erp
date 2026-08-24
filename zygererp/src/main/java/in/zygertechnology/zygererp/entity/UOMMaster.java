@@ -1,11 +1,13 @@
 package in.zygertechnology.zygererp.entity;
 
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 
 @Entity @Table(name = "uom_master")
+@EntityListeners(AuditEntityListener.class)
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class UOMMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;

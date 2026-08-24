@@ -47,14 +47,22 @@ export const qualityApi = {
     await apiClient.delete(`/v1/quality/inspections/${id}`);
   },
 
-  async getNextNumber(): Promise<{ nextNumber: string }> {
-    const response = await apiClient.get<{ nextNumber: string }>('/v1/quality/inspections/next-number');
+  async getNextNumber(typeParam?: string): Promise<{ nextNumber: string }> {
+    const url = `/v1/quality/inspections/next-number${typeParam || ''}`;
+    const response = await apiClient.get<{ nextNumber: string }>(url);
     return response.data;
   },
 
   async saveMeasurements(id: number | string, lines: CharacteristicLinePayload[]): Promise<InspectionDto> {
     const response = await apiClient.post<InspectionDto>(`/v1/quality/inspections/${id}/save-measurements`, lines);
     return response.data;
+  },
+
+  async bulkImportMeasurements(id: number | string, csvContent: string): Promise<{ matched: number; unmatched: number; totalRows: number; inspection: InspectionDto }> {
+    const response = await apiClient.post(`/v1/quality/inspections/${id}/characteristics/bulk-import`, csvContent, {
+      headers: { 'Content-Type': 'text/plain' },
+    });
+    return response.data as any;
   },
 
   async start(id: number | string): Promise<InspectionDto> {

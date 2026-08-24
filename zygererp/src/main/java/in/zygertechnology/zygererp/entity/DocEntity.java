@@ -14,5 +14,30 @@ public interface DocEntity {
     Instant getDeletedAt(); void setDeletedAt(Instant i);
     String getDeletedBy(); void setDeletedBy(String u);
     Long getVersion();
+
+    // Lifecycle fields (from BaseDoc)
+    default String getSubmittedBy() { return null; }
+    default void setSubmittedBy(String s) {}
+    default Instant getSubmittedAt() { return null; }
+    default void setSubmittedAt(Instant i) {}
+    default Long getApprovedByUserId() { return null; }
+    default void setApprovedByUserId(Long id) {}
+    default Instant getApprovedAt() { return null; }
+    default void setApprovedAt(Instant i) {}
+    default String getClosedBy() { return null; }
+    default void setClosedBy(String s) {}
+    default Instant getClosedAt() { return null; }
+    default void setClosedAt(Instant i) {}
+    default String getCancelledBy() { return null; }
+    default void setCancelledBy(String s) {}
+    default Instant getCancelledAt() { return null; }
+    default void setCancelledAt(Instant i) {}
+    default String getReopenedBy() { return null; }
+    default void setReopenedBy(String s) {}
+    default Instant getReopenedAt() { return null; }
+    default void setReopenedAt(Instant i) {}
+    default Long getPlantId() { return 1L; }
+    default void setPlantId(Long id) {}
+
     List<? extends LineEntity> getLines();
 }

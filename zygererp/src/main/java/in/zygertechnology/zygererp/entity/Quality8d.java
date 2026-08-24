@@ -37,6 +37,16 @@ public class Quality8d extends BaseDoc implements DocEntity {
     @Column(name = "capa_id")
     Long capaId;
 
+    /** FK to quality_customer_complaint.id (FRS §10.5) */
+    @Column(name = "source_complaint_id")
+    Long sourceComplaintId;
+    /** FK to quality_capa.id when the 8D escalates a CAPA (FRS §10.5) */
+    @Column(name = "source_capa_id")
+    Long sourceCapaId;
+    /** FK to non_conformance_report.id when the 8D originates from an NCR (FRS §10.5) */
+    @Column(name = "source_ncr_id")
+    Long sourceNcrId;
+
     @Column(name = "customer_code", length = 60)
     String customerCode;
     @Column(name = "customer_name", length = 120)

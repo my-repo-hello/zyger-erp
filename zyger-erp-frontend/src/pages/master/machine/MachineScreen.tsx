@@ -3,6 +3,8 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
+import { exportToCsv } from '../../../utils/exportCsv';
 
 export interface MachineItem {
   id: number;
@@ -55,6 +57,8 @@ export default function MachineScreen() {
   const [statusFilter, setStatusFilter] = useState('');
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MachineItem | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditEntityId, setAuditEntityId] = useState<number | undefined>(undefined);
 
   // Form State - Basic & Commercial
   const [code, setCode] = useState('MAC-0001');
@@ -338,6 +342,12 @@ export default function MachineScreen() {
                 <option value="BREAKDOWN">Breakdown</option>
               </select>
               <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 600 }}>{filteredRows.length} records</span>
+              <button className="btn btn-sm" onClick={() => exportToCsv(filteredRows as unknown as Record<string, unknown>[], 'machines')} title="Export CSV">
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>download</span> CSV
+              </button>
+              <button className="btn btn-sm" onClick={() => { setAuditEntityId(undefined); setAuditOpen(true); }} title="Audit History">
+                <span className="material-symbols-rounded" style={{ fontSize: 16 }}>history</span>
+              </button>
             </div>
           </div>
 
@@ -675,6 +685,8 @@ export default function MachineScreen() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={del}
       />
+
+      <AuditHistoryDrawer open={auditOpen} entityType="MachineMaster" entityId={auditEntityId} onClose={() => setAuditOpen(false)} />
     </>
   );
 }

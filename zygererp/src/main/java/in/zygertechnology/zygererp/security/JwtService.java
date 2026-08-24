@@ -29,12 +29,16 @@ public class JwtService {
     }
 
     public String generate(String username, String role) {
+        return generate(username, role, expirationMs);
+    }
+
+    public String generate(String username, String role, long ttlMillis) {
         Date now = new Date();
         return Jwts.builder()
                 .subject(username)
                 .claim("role", role)
                 .issuedAt(now)
-                .expiration(new Date(now.getTime() + expirationMs))
+                .expiration(new Date(now.getTime() + ttlMillis))
                 .signWith(key)
                 .compact();
     }

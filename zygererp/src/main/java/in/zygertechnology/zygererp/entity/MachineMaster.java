@@ -2,10 +2,13 @@ package in.zygertechnology.zygererp.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import java.math.BigDecimal;
 import java.time.Instant;
 
-@Entity @Table(name = "machine_master") @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@Entity @Table(name = "machine_master")
+@EntityListeners(AuditEntityListener.class)
+@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class MachineMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
     @Version Long version;
@@ -29,7 +32,13 @@ public class MachineMaster {
     @Column(name = "total_cost_with_gst", precision = 14, scale = 2) BigDecimal totalCostWithGst;
     BigDecimal capacity;
     @Column(name = "hourly_rate") BigDecimal hourlyRate;
-    @Column(length = 30) String status;
+    /**
+     * FRS §4.5 machine lifecycle status. Valid values:
+     * AVAILABLE (default), RUNNING, IN_USE, IDLE, UNDER_MAINTENANCE, BREAKDOWN.
+     * Set to BREAKDOWN automatically on critical/high-priority breakdown intimation,
+     * reverted to AVAILABLE when the breakdown is rectified/closed.
+     */
+    @Column(length = 30) @Builder.Default String status = "AVAILABLE";
     @Column(name = "controller_brand", length = 100) String controllerBrand;
     @Column(name = "spindle_speed") Integer spindleSpeed;
     @Column(name = "spindle_power", precision = 10, scale = 2) BigDecimal spindlePower;
@@ -50,12 +59,23 @@ public class MachineMaster {
     @Column(name = "program_reference", length = 100) String programReference;
     @Column(columnDefinition = "TEXT") String notes;
     @Builder.Default Boolean active = Boolean.TRUE;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_machine_id")
+    MachineMaster parentMachine;
+    /**
+     * FRS §4.5: Criticality classification for SLA-driven escalation.
+     * A = Critical (production-stopping if down), B = Important, C = Non-critical.
+     */
+    @Column(length = 10) @Builder.Default String criticality = "B";
+    @Column(name = "qr_code_value", length = 200) String qrCodeValue;
+    @Column(name = "plant_id") @Builder.Default Long plantId = 1L;
     String createdBy;
     Instant createdAt;
     String updatedBy;
     Instant updatedAt;
     @PrePersist void prePersist() {
         if (active == null) active = Boolean.TRUE;
+        if (status == null || status.isBlank()) status = "AVAILABLE";
         if (createdAt == null) createdAt = Instant.now();
         if (createdBy == null || createdBy.isBlank()) createdBy = "system";
     }

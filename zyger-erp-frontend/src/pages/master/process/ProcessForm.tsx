@@ -18,6 +18,13 @@ export default function ProcessForm({ processId, viewOnly = false, onBack, onSav
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const fetchNextCode = async () => {
+    try {
+      const { data } = await apiClient.get('/master/processes/next-code');
+      setForm((c) => ({ ...c, code: data.code }));
+    } catch { /* code field will remain empty if fetch fails */ }
+  };
+
   useEffect(() => {
     if (!processId) {
       setForm(defaultForm());
@@ -41,13 +48,6 @@ export default function ProcessForm({ processId, viewOnly = false, onBack, onSav
       onBack();
     }).finally(() => setLoading(false));
   }, [processId]);
-
-  const fetchNextCode = async () => {
-    try {
-      const { data } = await apiClient.get('/master/processes/next-code');
-      setForm((c) => ({ ...c, code: data.code }));
-    } catch { /* code field will remain empty if fetch fails */ }
-  };
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
 

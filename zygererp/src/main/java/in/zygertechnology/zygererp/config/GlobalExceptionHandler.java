@@ -2,13 +2,14 @@ package in.zygertechnology.zygererp.config;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.InvalidDataAccessResourceUsageException;
 import org.springframework.http.HttpStatus;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
-import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import java.net.URI;
+import java.util.List;
 import java.util.Map;
 
 @RestControllerAdvice
@@ -16,71 +17,88 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    @ResponseStatus(HttpStatus.BAD_REQUEST)
-    public Map<String,String> business(IllegalArgumentException e) {
-        return Map.of("message", e.getMessage() == null ? "Bad request" : e.getMessage());
-    }
-
     @ExceptionHandler(IllegalStateException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public Map<String,String> conflict(IllegalStateException e) {
-        return Map.of("message", e.getMessage() == null ? "Conflict" : e.getMessage());
+    public ProblemDetail handleIllegalState(IllegalStateException ex) {
+        log.warn("Workflow violation: {}", ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT, ex.getMessage());
+        pd.setTitle("Invalid State Transition");
+        pd.setType(URI.create("/errors/workflow-violation"));
+        pd.setProperty("code", "WORKFLOW_VIOLATION");
+        return pd;
     }
 
-    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public Map<String,String> optimisticLock(ObjectOptimisticLockingFailureException e) {
-        log.warn("Optimistic lock failure: {}", e.getMessage());
-        return Map.of("message", "This document was modified by another user. Please refresh and try again.");
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ProblemDetail handleIllegalArg(IllegalArgumentException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, ex.getMessage());
+        pd.setTitle("Validation Error");
+        pd.setType(URI.create("/errors/validation"));
+        pd.setProperty("code", "VALIDATION_ERROR");
+        return pd;
     }
 
-    @ExceptionHandler(DataIntegrityViolationException.class)
-    @ResponseStatus(HttpStatus.CONFLICT)
-    public Map<String,String> dataIntegrity(DataIntegrityViolationException e) {
-        log.warn("Data integrity violation: {}", e.getMessage());
-        String msg = e.getMessage();
-        if (msg != null && msg.contains("duplicate key")) {
-            return Map.of("message", "A record with this code already exists. Please use a different code.");
+    @ExceptionHandler(SecurityException.class)
+    public ProblemDetail handleSecurity(SecurityException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.FORBIDDEN, ex.getMessage());
+        pd.setTitle("Access Denied");
+        pd.setType(URI.create("/errors/access-denied"));
+        pd.setProperty("code", "FORBIDDEN");
+        return pd;
+    }
+
+    @ExceptionHandler(BusinessRuleException.class)
+    public ProblemDetail handleBusinessRule(BusinessRuleException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+        pd.setTitle("Business Rule Violation");
+        pd.setType(URI.create("/errors/business-rule"));
+        pd.setProperty("code", ex.getRuleCode());
+        if (ex.getDetails() != null) {
+            ex.getDetails().forEach(pd::setProperty);
         }
-        return Map.of("message", "Data integrity violation. Please check your input.");
+        return pd;
     }
 
-    @ExceptionHandler(RuntimeException.class)
-    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public Map<String,String> runtime(RuntimeException e) {
-        log.error("Unhandled runtime exception", e);
-        String msg = e.getMessage() != null ? e.getMessage() : "An unexpected error occurred. Please try again.";
-        return Map.of("message", msg);
-    }
-
-    @ExceptionHandler(InvalidDataAccessResourceUsageException.class)
-    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public Map<String,String> dbError(InvalidDataAccessResourceUsageException e) {
-        log.error("Database error", e);
-        return Map.of("message", "Database error. Please contact support.");
-    }
-
-    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
-    @ResponseStatus(HttpStatus.METHOD_NOT_ALLOWED)
-    public Map<String,String> methodNotAllowed(HttpRequestMethodNotSupportedException e) {
-        return Map.of("message", "Method not allowed: " + e.getMethod());
+    @ExceptionHandler(RateLimitException.class)
+    public ProblemDetail handleRateLimit(RateLimitException ex) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.TOO_MANY_REQUESTS, ex.getMessage());
+        pd.setTitle("Rate Limit Exceeded");
+        pd.setType(URI.create("/errors/rate-limit"));
+        pd.setProperty("code", "RATE_LIMIT_EXCEEDED");
+        pd.setProperty("retryAfterSeconds", ex.getRetryAfterSeconds());
+        return pd;
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    @ResponseStatus(HttpStatus.UNPROCESSABLE_ENTITY)
-    public Map<String,Object> validation(MethodArgumentNotValidException e) {
-        var fieldErrors = e.getBindingResult().getFieldErrors().stream()
-            .map(fe -> Map.of("field", fe.getField(), "message", fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "Invalid"))
-            .toList();
-        return Map.of("message", "Validation failed", "errors", fieldErrors);
+    public ProblemDetail handleMethodArgumentNotValid(MethodArgumentNotValidException ex) {
+
+        List<Map<String, String>> errors = ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> Map.of(
+                        "field", fe.getField(),
+                        "message", fe.getDefaultMessage() != null ? fe.getDefaultMessage() : "Invalid",
+                        "rejected", fe.getRejectedValue() != null ? String.valueOf(fe.getRejectedValue()) : "null"))
+                .toList();
+
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST, "Validation failed");
+        pd.setTitle("Validation Error");
+        pd.setType(URI.create("/errors/validation"));
+        pd.setProperty("code", "VALIDATION_ERROR");
+        pd.setProperty("errors", errors);
+        return pd;
     }
 
     @ExceptionHandler(Exception.class)
-    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public Map<String,String> generic(Exception e) {
-        log.error("Unexpected exception", e);
-        String msg = e.getMessage() != null ? e.getMessage() : "An unexpected error occurred. Please try again.";
-        return Map.of("message", msg);
+    public ProblemDetail handleGeneral(Exception ex) {
+        log.error("Unhandled exception", ex);
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred");
+        pd.setTitle("Internal Server Error");
+        pd.setType(URI.create("/errors/internal"));
+        pd.setProperty("code", "INTERNAL_ERROR");
+        return pd;
     }
 }

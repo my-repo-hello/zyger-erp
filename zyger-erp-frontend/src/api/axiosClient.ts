@@ -13,7 +13,6 @@ const apiClient = axios.create({
   timeout: 30000,
 });
 
-// Request Interceptor: Inject JWT
 apiClient.interceptors.request.use(
   (config) => {
     const token = sessionStorage.getItem('zyger-access-token');
@@ -25,13 +24,24 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Response Interceptor: Retry + Centralized Error Handling
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
     const config = error.config as RetryableConfig | undefined;
 
-    // Retry on network errors and 5xx (not 4xx — those are client errors)
+    if (error.response?.status === 401 && config && !config.url?.includes('/auth/')) {
+      sessionStorage.removeItem('zyger-access-token');
+      sessionStorage.removeItem('zyger-user');
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login');
+      }
+      return Promise.reject(new Error('Session expired. Please sign in again.'));
+    }
+
+    if (error.response?.status === 403) {
+      return Promise.reject(new Error("You don't have permission for this action."));
+    }
+
     if (config && !error.response?.status?.toString().startsWith('4')) {
       const retries = config._retryCount ?? 0;
       if (retries < MAX_RETRIES) {

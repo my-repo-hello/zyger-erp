@@ -5,6 +5,7 @@ import in.zygertechnology.zygererp.entity.*;
 import in.zygertechnology.zygererp.repo.*;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -19,6 +20,7 @@ import java.util.*;
 import java.util.stream.Stream;
 
 @RestController @RequiredArgsConstructor
+@RequirePermission(module = "MASTER", screen = "*", action = "VIEW")
 public class MasterController {
     private final ItemRepository items;
     private final PartyRepository parties;
@@ -113,6 +115,7 @@ public class MasterController {
                                        @RequestParam(required=false) String itemType,
                                        @RequestParam(required=false) String active) {
         List<ItemMaster> all = new ArrayList<>(items.findAll());
+        all.removeIf(i -> !i.isActive());
         if (search != null && !search.isEmpty()) {
             String s = search.toLowerCase();
             all.removeIf(i -> {
@@ -277,7 +280,7 @@ public class MasterController {
         }
         return m;
     }
-    @DeleteMapping("/api/master/items/{id}") void del(@PathVariable Long id){ items.deleteById(id); }
+    @DeleteMapping("/api/master/items/{id}") void del(@PathVariable Long id){ items.findById(id).ifPresent(i -> { i.setActive(false); items.save(i); }); }
 
     @GetMapping("/api/master/items/{code}/bom")
     public List<ItemBomComponent> getItemBom(@PathVariable String code) {
@@ -312,8 +315,8 @@ public class MasterController {
     }
 
 
-    @GetMapping("/api/master/suppliers") List<Party> sup(){ return parties.findByKind("SUPPLIER"); }
-    @GetMapping("/api/master/customers") List<Party> cus(){ return parties.findByKind("CUSTOMER"); }
+    @GetMapping("/api/master/suppliers") List<Party> sup(){ return parties.findByKind("SUPPLIER").stream().filter(Party::isActive).toList(); }
+    @GetMapping("/api/master/customers") List<Party> cus(){ return parties.findByKind("CUSTOMER").stream().filter(Party::isActive).toList(); }
 
     // ---- Party CRUD (suppliers & customers) ----
     @GetMapping("/api/master/parties/{id}")
@@ -332,6 +335,7 @@ public class MasterController {
         } else {
             all.addAll(parties.findAll());
         }
+        all.removeIf(p -> !p.isActive());
         if (search != null && !search.isEmpty()) {
             String s = search.toLowerCase();
             all.removeIf(p -> {
@@ -365,10 +369,10 @@ public class MasterController {
         return parties.save(merged);
     }
 
-    @DeleteMapping("/api/master/parties/{id}") void delParty(@PathVariable Long id) { parties.deleteById(id); }
+    @DeleteMapping("/api/master/parties/{id}") void delParty(@PathVariable Long id) { parties.findById(id).ifPresent(p -> { p.setActive(false); parties.save(p); }); }
 
     // ---- Location CRUD ----
-    @GetMapping("/api/inventory/locations") List<LocationMaster> loc(){ return locs.findAll(); }
+    @GetMapping("/api/inventory/locations") List<LocationMaster> loc(){ return locs.findAll().stream().filter(LocationMaster::isActive).toList(); }
     @GetMapping("/api/inventory/locations/{id}") LocationMaster getLoc(@PathVariable Long id){ return locs.findById(id).orElseThrow(); }
 
     @PostMapping("/api/inventory/locations") LocationMaster createLoc(@RequestBody LocationMaster l, Principal principal) {
@@ -386,7 +390,7 @@ public class MasterController {
         return locs.save(merged);
     }
 
-    @DeleteMapping("/api/inventory/locations/{id}") void delLoc(@PathVariable Long id) { locs.deleteById(id); }
+    @DeleteMapping("/api/inventory/locations/{id}") void delLoc(@PathVariable Long id) { locs.findById(id).ifPresent(l -> { l.setActive(false); locs.save(l); }); }
 
     @GetMapping("/api/master/departments") List<String> depts(){ return List.of("Production","Maintenance","Quality","Tool Room","Stores"); }
     @GetMapping("/api/purchase-orders") List<RefDoc> po(@RequestParam(required=false) String status){ return refs.findByKind("PO"); }
@@ -394,17 +398,17 @@ public class MasterController {
     @GetMapping("/api/labour-orders") List<RefDoc> lo(){ return refs.findByKind("LO"); }
 
     // ---- Work Centers ----
-    @GetMapping("/api/master/work-centers") List<WorkCenter> workCenters(){ return workCenters.findAll(); }
+    @GetMapping("/api/master/work-centers") List<WorkCenter> workCenters(){ return workCenters.findAll().stream().filter(WorkCenter::isActive).toList(); }
     @PostMapping("/api/master/work-centers") WorkCenter createWC(@RequestBody WorkCenter wc){ wc.setId(null); return workCenters.save(wc); }
     @PutMapping("/api/master/work-centers/{id}") @Transactional WorkCenter updateWC(@PathVariable Long id, @RequestBody ObjectNode body){
         WorkCenter e = workCenters.findById(id).orElseThrow(() -> new RuntimeException("Work Center not found"));
         WorkCenter merged = mergePatch(e, body);
         merged.setId(id); merged.setVersion(e.getVersion());
         return workCenters.save(merged); }
-    @DeleteMapping("/api/master/work-centers/{id}") void delWC(@PathVariable Long id){ workCenters.deleteById(id); }
+    @DeleteMapping("/api/master/work-centers/{id}") void delWC(@PathVariable Long id){ workCenters.findById(id).ifPresent(w -> { w.setActive(false); workCenters.save(w); }); }
 
     // ---- Machines ----
-    @GetMapping("/api/master/machines") List<MachineMaster> machines(){ return machines.findAll(); }
+    @GetMapping("/api/master/machines") List<MachineMaster> machines(){ return machines.findAll().stream().filter(MachineMaster::isActive).toList(); }
     @GetMapping("/api/master/machines/{id}") MachineMaster getMachine(@PathVariable Long id){ return machines.findById(id).orElseThrow(); }
     @PostMapping("/api/master/machines") MachineMaster createMachine(@RequestBody MachineMaster m){ m.setId(null); return machines.save(m); }
     @PutMapping("/api/master/machines/{id}") @Transactional MachineMaster updateMachine(@PathVariable Long id, @RequestBody ObjectNode body){
@@ -412,27 +416,27 @@ public class MasterController {
         MachineMaster merged = mergePatch(e, body);
         merged.setId(id); merged.setVersion(e.getVersion());
         return machines.save(merged); }
-    @DeleteMapping("/api/master/machines/{id}") void delMachine(@PathVariable Long id){ machines.deleteById(id); }
+    @DeleteMapping("/api/master/machines/{id}") void delMachine(@PathVariable Long id){ machines.findById(id).ifPresent(m -> { m.setActive(false); machines.save(m); }); }
 
     // ---- Operations ----
-    @GetMapping("/api/master/operations") List<OperationMaster> operations(){ return operations.findAll(); }
+    @GetMapping("/api/master/operations") List<OperationMaster> operations(){ return operations.findAll().stream().filter(OperationMaster::isActive).toList(); }
     @PostMapping("/api/master/operations") OperationMaster createOp(@RequestBody OperationMaster o){ o.setId(null); return operations.save(o); }
     @PutMapping("/api/master/operations/{id}") @Transactional OperationMaster updateOp(@PathVariable Long id, @RequestBody ObjectNode body){
         OperationMaster e = operations.findById(id).orElseThrow(() -> new RuntimeException("Operation not found"));
         OperationMaster merged = mergePatch(e, body);
         merged.setId(id); merged.setVersion(e.getVersion());
         return operations.save(merged); }
-    @DeleteMapping("/api/master/operations/{id}") void delOp(@PathVariable Long id){ operations.deleteById(id); }
+    @DeleteMapping("/api/master/operations/{id}") void delOp(@PathVariable Long id){ operations.findById(id).ifPresent(o -> { o.setActive(false); operations.save(o); }); }
 
     // ---- Shift Calendar ----
-    @GetMapping("/api/master/shifts") List<ShiftCalendar> shifts(){ return shifts.findAll(); }
+    @GetMapping("/api/master/shifts") List<ShiftCalendar> shifts(){ return shifts.findAll().stream().filter(ShiftCalendar::isActive).toList(); }
     @PostMapping("/api/master/shifts") ShiftCalendar createShift(@RequestBody ShiftCalendar s){ s.setId(null); return shifts.save(s); }
     @PutMapping("/api/master/shifts/{id}") @Transactional ShiftCalendar updateShift(@PathVariable Long id, @RequestBody ObjectNode body){
         ShiftCalendar e = shifts.findById(id).orElseThrow(() -> new RuntimeException("Shift not found"));
         ShiftCalendar merged = mergePatch(e, body);
         merged.setId(id); merged.setVersion(e.getVersion());
         return shifts.save(merged); }
-    @DeleteMapping("/api/master/shifts/{id}") void delShift(@PathVariable Long id){ shifts.deleteById(id); }
+    @DeleteMapping("/api/master/shifts/{id}") void delShift(@PathVariable Long id){ shifts.findById(id).ifPresent(s -> { s.setActive(false); shifts.save(s); }); }
 
     // ================================================================
     //  MASTER MODULE V9 — New master data CRUD
@@ -450,7 +454,7 @@ public class MasterController {
     // ---- UOM Master ----
     @GetMapping("/api/master/uoms")
     List<Map<String,Object>> uomList() {
-        return uoms.findAll().stream().map(u -> {
+        return uoms.findAll().stream().filter(UOMMaster::isActive).map(u -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", u.getId()); m.put("code", u.getCode()); m.put("name", u.getName());
             m.put("symbol", u.getSymbol()); m.put("baseUom", u.getBaseUom()); m.put("conversionFactor", u.getConversionFactor());
@@ -468,12 +472,12 @@ public class MasterController {
         merged.setId(id); merged.setVersion(e.getVersion());
         return uoms.save(merged);
     }
-    @DeleteMapping("/api/master/uoms/{id}") void delUom(@PathVariable Long id){ uoms.deleteById(id); }
+    @DeleteMapping("/api/master/uoms/{id}") void delUom(@PathVariable Long id){ uoms.findById(id).ifPresent(u -> { u.setActive(false); uoms.save(u); }); }
 
     // ---- Item Group ----
     @GetMapping("/api/master/item-groups") @Transactional(readOnly = true)
     List<Map<String,Object>> itemGroupList() {
-        return itemGroups.findAll().stream().map(g -> {
+        return itemGroups.findAll().stream().filter(ItemGroup::isActive).map(g -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", g.getId()); m.put("code", g.getCode()); m.put("name", g.getName());
             m.put("itemType", g.getItemType()); m.put("description", g.getDescription()); m.put("active", g.isActive());
@@ -499,7 +503,7 @@ public class MasterController {
         }
         return itemGroups.save(merged);
     }
-    @DeleteMapping("/api/master/item-groups/{id}") void delItemGroup(@PathVariable Long id){ itemGroups.deleteById(id); }
+    @DeleteMapping("/api/master/item-groups/{id}") void delItemGroup(@PathVariable Long id){ itemGroups.findById(id).ifPresent(g -> { g.setActive(false); itemGroups.save(g); }); }
 
     // ---- Rack Master ----
     private final RackMasterRepository rackMasters;
@@ -514,7 +518,8 @@ public class MasterController {
 
     @GetMapping("/api/master/racks") @Transactional(readOnly = true)
     List<Map<String,Object>> rackList(@RequestParam(required=false) Long storeId) {
-        List<RackMaster> list = storeId != null ? rackMasters.findByStoreId(storeId) : rackMasters.findAll();
+        List<RackMaster> list = (storeId != null ? rackMasters.findByStoreId(storeId) : rackMasters.findAll())
+            .stream().filter(RackMaster::isActive).toList();
         return list.stream().map(r -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", r.getId()); m.put("code", r.getCode()); m.put("name", r.getName());
@@ -550,7 +555,7 @@ public class MasterController {
         if (body.containsKey("storeId")) e.setStore(body.get("storeId") != null ? stores.findById(Long.valueOf(body.get("storeId").toString())).orElse(null) : null);
         return rackMasters.save(e);
     }
-    @DeleteMapping("/api/master/racks/{id}") void delRack(@PathVariable Long id){ rackMasters.deleteById(id); }
+    @DeleteMapping("/api/master/racks/{id}") void delRack(@PathVariable Long id){ rackMasters.findById(id).ifPresent(r -> { r.setActive(false); rackMasters.save(r); }); }
 
     // ---- Bin Master ----
     private final BinMasterRepository binMasters;
@@ -569,6 +574,7 @@ public class MasterController {
         if (rackId != null) list = binMasters.findByRackId(rackId);
         else if (storeId != null) list = binMasters.findByStoreId(storeId);
         else list = binMasters.findAll();
+        list = list.stream().filter(BinMaster::isActive).toList();
         return list.stream().map(b -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", b.getId()); m.put("code", b.getCode()); m.put("name", b.getName());
@@ -608,7 +614,7 @@ public class MasterController {
         if (body.containsKey("rackId")) e.setRack(body.get("rackId") != null ? rackMasters.findById(Long.valueOf(body.get("rackId").toString())).orElse(null) : null);
         return binMasters.save(e);
     }
-    @DeleteMapping("/api/master/bins/{id}") void delBin(@PathVariable Long id){ binMasters.deleteById(id); }
+    @DeleteMapping("/api/master/bins/{id}") void delBin(@PathVariable Long id){ binMasters.findById(id).ifPresent(b -> { b.setActive(false); binMasters.save(b); }); }
 
     // ---- Store Master ----
     @GetMapping("/api/master/stores/{id}")
@@ -618,7 +624,7 @@ public class MasterController {
 
     @GetMapping("/api/master/stores")
     List<Map<String,Object>> storeList() {
-        return stores.findAll().stream().map(s -> {
+        return stores.findAll().stream().filter(StoreMaster::isActive).map(s -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", s.getId()); m.put("code", s.getCode()); m.put("name", s.getName());
             m.put("description", s.getDescription()); m.put("storeType", s.getStoreType());
@@ -642,7 +648,7 @@ public class MasterController {
         applyStoreFields(e, body);
         return stores.save(e);
     }
-    @DeleteMapping("/api/master/stores/{id}") void delStore(@PathVariable Long id){ stores.deleteById(id); }
+    @DeleteMapping("/api/master/stores/{id}") void delStore(@PathVariable Long id){ stores.findById(id).ifPresent(s -> { s.setActive(false); stores.save(s); }); }
 
     private void applyStoreFields(StoreMaster s, Map<String,Object> b) {
         if (b.containsKey("code")) s.setCode((String) b.get("code"));
@@ -667,7 +673,7 @@ public class MasterController {
     // ---- Process Group ----
     @GetMapping("/api/master/process-groups")
     List<Map<String,Object>> processGroupList() {
-        return processGroups.findAll().stream().map(g -> {
+        return processGroups.findAll().stream().filter(ProcessGroup::isActive).map(g -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", g.getId()); m.put("code", g.getCode()); m.put("name", g.getName());
             m.put("description", g.getDescription());
@@ -688,12 +694,12 @@ public class MasterController {
         merged.setId(id); merged.setVersion(e.getVersion());
         return processGroups.save(merged);
     }
-    @DeleteMapping("/api/master/process-groups/{id}") void delProcessGroup(@PathVariable Long id){ processGroups.deleteById(id); }
+    @DeleteMapping("/api/master/process-groups/{id}") void delProcessGroup(@PathVariable Long id){ processGroups.findById(id).ifPresent(g -> { g.setActive(false); processGroups.save(g); }); }
 
     // ---- Process Master ----
     @GetMapping("/api/master/processes")
     List<Map<String,Object>> processList() {
-        return processMasters.findAll().stream().map(p -> {
+        return processMasters.findAll().stream().filter(ProcessMaster::isActive).map(p -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", p.getId()); m.put("code", p.getCode()); m.put("name", p.getName());
             m.put("description", p.getDescription()); m.put("cycleTime", p.getCycleTime());
@@ -720,12 +726,12 @@ public class MasterController {
         }
         return processMasters.save(merged);
     }
-    @DeleteMapping("/api/master/processes/{id}") void delProcess(@PathVariable Long id){ processMasters.deleteById(id); }
+    @DeleteMapping("/api/master/processes/{id}") void delProcess(@PathVariable Long id){ processMasters.findById(id).ifPresent(p -> { p.setActive(false); processMasters.save(p); }); }
 
     // ---- Instrument Master ----
     @GetMapping("/api/master/instruments")
     List<Map<String,Object>> instrumentList() {
-        return instruments.findAll().stream().map(i -> {
+        return instruments.findAll().stream().filter(InstrumentMaster::isActive).map(i -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", i.getId()); m.put("code", i.getCode()); m.put("name", i.getName());
             m.put("instrumentType", i.getInstrumentType()); m.put("manufacturer", i.getManufacturer());
@@ -748,12 +754,12 @@ public class MasterController {
         merged.setId(id); merged.setVersion(e.getVersion());
         return instruments.save(merged);
     }
-    @DeleteMapping("/api/master/instruments/{id}") void delInstrument(@PathVariable Long id){ instruments.deleteById(id); }
+    @DeleteMapping("/api/master/instruments/{id}") void delInstrument(@PathVariable Long id){ instruments.findById(id).ifPresent(i -> { i.setActive(false); instruments.save(i); }); }
 
     // ---- Tool Master ----
     @GetMapping("/api/master/tools")
     List<Map<String,Object>> toolList() {
-        return toolMasters.findAll().stream().map(t -> {
+        return toolMasters.findAll().stream().filter(ToolMaster::isActive).map(t -> {
             Map<String,Object> m = new LinkedHashMap<>();
             m.put("id", t.getId()); m.put("code", t.getCode()); m.put("name", t.getName());
             m.put("toolType", t.getToolType()); m.put("material", t.getMaterial());
@@ -778,7 +784,7 @@ public class MasterController {
         merged.setId(id); merged.setVersion(e.getVersion());
         return toolMasters.save(merged);
     }
-    @DeleteMapping("/api/master/tools/{id}") void delTool(@PathVariable Long id){ toolMasters.deleteById(id); }
+    @DeleteMapping("/api/master/tools/{id}") void delTool(@PathVariable Long id){ toolMasters.findById(id).ifPresent(t -> { t.setActive(false); toolMasters.save(t); }); }
 
     // ---- Company Info (singleton, id=1) ----
     @GetMapping("/api/master/company-info")

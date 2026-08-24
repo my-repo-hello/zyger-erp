@@ -3,6 +3,7 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface CalibrationSchedule {
   id: number;
@@ -143,7 +144,7 @@ export default function CalibrationScheduleScreen() {
                       <td>{r.serialNumber ?? '-'}</td>
                       <td>{(r.calibrationFrequency ?? '').replace(/-/g, ' ')}</td>
                       <td>{r.nextDueDate ?? '-'}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.calibrationStatus] ?? SC.ACTIVE).color, background: (SC[r.calibrationStatus] ?? SC.ACTIVE).bg }}>{r.calibrationStatus ?? '-'}</span></td>
+                      <td><StatusBadge status={r.calibrationStatus ?? '-'} variant={SC} /></td>
                       <td>
                         <div style={{ position: 'relative' }}>
                           <button className="ibtn" title="Actions" onClick={() => setOpenActionMenu(openActionMenu === r.id ? null : r.id)}><span className="material-symbols-rounded">more_vert</span></button>

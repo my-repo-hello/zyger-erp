@@ -1,16 +1,69 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTabs } from '../../contexts/TabsContext';
 import Navigation, { type NavigationNavigatePayload } from './Navigation';
 import { getScreenComponent } from '../../config/screenRegistry';
-import { NAV_ITEMS } from '../../config/navigation';
+import { NAV_ITEMS, type NavNode, type NavGroupNode, type NavTopItem } from '../../config/navigation';
 import DashboardPage from '../../pages/dashboard/DashboardPage';
+import apiClient from '../../api/axiosClient';
 
 interface SearchResult {
   id: string;
   label: string;
   icon: string;
   screenId: string;
+}
+
+interface RecordResult {
+  key: string;
+  typeLabel: string;
+  screenId: string;
+  icon: string;
+  title: string;
+  subtitle: string;
+}
+
+const RECORD_SEARCH_MIN_CHARS = 3;
+
+const ITEM_SCREEN_BY_TYPE: Record<string, string> = {
+  PURCHASABLE: 'purchasable-item',
+  CUSTOMER_SUPPLIED: 'customer-supplied-item',
+  MANUFACTURING: 'manufacturing-item',
+};
+
+function unwrapContent(data: unknown): Record<string, unknown>[] {
+  if (Array.isArray(data)) return data as Record<string, unknown>[];
+  const d = data as Record<string, unknown> | null | undefined;
+  return Array.isArray(d?.content) ? (d.content as Record<string, unknown>[]) : [];
+}
+
+function field(row: Record<string, unknown>, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = row[k];
+    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v);
+  }
+  return '';
+}
+
+function docRecord(typeLabel: string, screenId: string, icon: string, row: Record<string, unknown>): RecordResult {
+  return {
+    key: `${screenId}-${field(row, 'id', 'docNo')}`,
+    typeLabel,
+    screenId,
+    icon,
+    title: field(row, 'docNo') || '(no number)',
+    subtitle: [field(row, 'supplier', 'buyer'), field(row, 'date'), field(row, 'status')].filter(Boolean).join(' · '),
+  };
+}
+
+interface Notification {
+  id: string;
+  message: string;
+  detail: string;
+  icon: string;
+  color: string;
+  timestamp: number;
+  screenId?: string;
 }
 
 function flattenNav(nodes: unknown[], icon?: string): SearchResult[] {
@@ -26,7 +79,57 @@ function flattenNav(nodes: unknown[], icon?: string): SearchResult[] {
   return out;
 }
 
-const ALL_SCREENS = flattenNav(NAV_ITEMS);
+function filterNavByPermission(nodes: NavNode[], hasModule: (mod: string) => boolean): NavNode[] {
+    const MODULE_MAP: Record<string, string> = {
+      'dashboard': 'master',
+      'master': 'master',
+      'crm': 'crm',
+      'sales': 'sales',
+      'purchase': 'purchase',
+      'inventory': 'inventory',
+      'planning': 'planning',
+      'production': 'production',
+      'quality': 'quality',
+      'maintenance': 'maintenance',
+      'admin': 'admin',
+      'reports-menu': 'reports',
+    };
+
+  const result: NavNode[] = [];
+  for (const node of nodes) {
+    if (node.type === 'heading') {
+      result.push(node);
+      continue;
+    }
+    if (node.type === 'item') {
+      result.push(node);
+      continue;
+    }
+    if (node.type === 'group') {
+      const filtered = filterNavByPermission(node.children, hasModule);
+      if (filtered.length > 0) {
+        result.push({ ...node, children: filtered });
+      }
+    }
+  }
+  return result;
+}
+
+function filterTopItems(items: NavTopItem[], hasModule: (mod: string) => boolean, can: (mod: string, action: string) => boolean): NavTopItem[] {
+  return items.filter((item) => {
+    const modName = item.id === 'reports-menu' ? 'reports' : item.id;
+    if (!hasModule(modName) && modName !== 'dashboard') return false;
+
+    if (!item.children || item.children.length === 0) return true;
+
+    const filtered = filterNavByPermission(item.children, hasModule);
+    return filtered.length > 0;
+  }).map((item) => {
+    if (!item.children || item.children.length === 0) return item;
+    const modName = item.id === 'reports-menu' ? 'reports' : item.id;
+    return { ...item, children: filterNavByPermission(item.children, hasModule) as NavNode[] };
+  });
+}
 
 function getInitialTheme(): 'light' | 'dark' {
   if (typeof window !== 'undefined') {
@@ -37,22 +140,26 @@ function getInitialTheme(): 'light' | 'dark' {
   return 'light';
 }
 
+const NOTIF_POLL_MS = 60_000;
+
 export default function MainLayout() {
-  const { user, logout } = useAuth();
+  const { user, logout, hasModule, can } = useAuth();
   const { tabs, activeTabId, openTab, closeTab, setActiveTab } = useTabs();
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
+  const [recordResults, setRecordResults] = useState<RecordResult[]>([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
 
-  // Apply theme
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('zyger-theme', theme);
@@ -60,7 +167,6 @@ export default function MainLayout() {
 
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
 
-  // Keyboard shortcut: Ctrl+K / Cmd+K for search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -77,7 +183,6 @@ export default function MainLayout() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  // Focus search input when opened
   useEffect(() => {
     if (searchOpen) {
       setTimeout(() => searchRef.current?.focus(), 50);
@@ -85,7 +190,6 @@ export default function MainLayout() {
     }
   }, [searchOpen]);
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false);
@@ -95,16 +199,121 @@ export default function MainLayout() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Search results — match each word separately
+  const filteredNavItems = useMemo(
+    () => filterTopItems(NAV_ITEMS, hasModule, (m, a) => can(m as never, a as never)),
+    [hasModule, can]
+  );
+
+  const filteredScreens = useMemo(() => {
+    const modMap: Record<string, string> = {
+      'dashboard': 'master', 'master': 'master', 'crm': 'crm', 'sales': 'sales',
+      'purchase': 'purchase', 'inventory': 'inventory', 'planning': 'planning',
+      'production': 'production', 'quality': 'quality', 'maintenance': 'maintenance',
+      'admin': 'admin',
+    };
+    const allScreens = flattenNav(NAV_ITEMS);
+    return allScreens.filter((s) => {
+      const parts = s.screenId.split('-');
+      const mod = parts[0];
+      return hasModule(mod) || mod === 'reports';
+    });
+  }, [hasModule]);
+
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const words = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
-    return ALL_SCREENS.filter((s) => {
+    return filteredScreens.filter((s) => {
       const label = s.label.toLowerCase();
       const id = s.id.toLowerCase();
       return words.every((w) => label.includes(w) || id.includes(w));
     });
-  }, [searchQuery]);
+  }, [searchQuery, filteredScreens]);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < RECORD_SEARCH_MIN_CHARS) {
+      setRecordResults([]);
+      setRecordsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setRecordsLoading(true);
+    const timer = setTimeout(() => {
+      const jobs: Promise<RecordResult[]>[] = [];
+      if (can('purchase', 'View')) {
+        jobs.push(
+          apiClient
+            .get('/v1/purchase/purchase-order', { params: { search: q, size: 5 }, signal: controller.signal })
+            .then((res) => unwrapContent(res.data).map((row) => docRecord('PO', 'purchase-order', 'receipt_long', row)))
+            .catch(() => [])
+        );
+      }
+      if (can('sales', 'View')) {
+        jobs.push(
+          apiClient
+            .get('/v1/sales/sales-order', { params: { search: q, size: 5 }, signal: controller.signal })
+            .then((res) => unwrapContent(res.data).map((row) => docRecord('SO', 'sales-order', 'shopping_cart', row)))
+            .catch(() => [])
+        );
+      }
+      if (can('master', 'View')) {
+        jobs.push(
+          apiClient
+            .get('/master/parties', { params: { kind: 'CUSTOMER', search: q, size: 5 }, signal: controller.signal })
+            .then((res) =>
+              unwrapContent(res.data).map((row) => ({
+                key: `customer-${field(row, 'id', 'code')}`,
+                typeLabel: 'Customer',
+                screenId: 'customer-list',
+                icon: 'contacts',
+                title: field(row, 'code') || field(row, 'name') || '(no code)',
+                subtitle: [field(row, 'name'), field(row, 'contactPerson')].filter(Boolean).join(' · '),
+              }))
+            )
+            .catch(() => [])
+        );
+        jobs.push(
+          apiClient
+            .get('/master/parties', { params: { kind: 'SUPPLIER', search: q, size: 5 }, signal: controller.signal })
+            .then((res) =>
+              unwrapContent(res.data).map((row) => ({
+                key: `supplier-${field(row, 'id', 'code')}`,
+                typeLabel: 'Supplier',
+                screenId: 'supplier-list',
+                icon: 'local_shipping',
+                title: field(row, 'code') || field(row, 'name') || '(no code)',
+                subtitle: [field(row, 'name'), field(row, 'contactPerson')].filter(Boolean).join(' · '),
+              }))
+            )
+            .catch(() => [])
+        );
+        jobs.push(
+          apiClient
+            .get('/master/items', { params: { search: q, size: 5 }, signal: controller.signal })
+            .then((res) =>
+              unwrapContent(res.data).map((row) => ({
+                key: `item-${field(row, 'id', 'code')}`,
+                typeLabel: 'Item',
+                screenId: ITEM_SCREEN_BY_TYPE[field(row, 'itemType').toUpperCase()] ?? 'purchasable-item',
+                icon: 'category',
+                title: field(row, 'code') || '(no code)',
+                subtitle: field(row, 'description'),
+              }))
+            )
+            .catch(() => [])
+        );
+      }
+      Promise.all(jobs).then((groups) => {
+        if (controller.signal.aborted) return;
+        setRecordResults(groups.flat());
+        setRecordsLoading(false);
+      });
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [searchQuery, can]);
 
   useEffect(() => {
     if (tabs.length === 0) {
@@ -130,9 +339,90 @@ export default function MainLayout() {
     openScreen({ id: result.screenId, label: result.label, icon: result.icon });
   };
 
+  const openRecord = (record: RecordResult) => {
+    openScreen({ id: record.screenId, label: record.typeLabel, icon: record.icon });
+  };
+
+  const openNotifScreen = (screenId: string) => {
+    openScreen({ id: screenId, label: screenId, icon: 'notifications' });
+  };
+
+  const fetchNotifications = useCallback(async () => {
+    const items: Notification[] = [];
+    const now = Date.now();
+    try {
+      if (can('inventory', 'View')) {
+        const res = await apiClient.get('/inventory/reports/overview');
+        const d = res.data as Record<string, unknown>;
+        if ((d.pendingApprovalCount as number) > 0) {
+          items.push({
+            id: 'pending-approval',
+            message: `${d.pendingApprovalCount} documents pending approval`,
+            detail: 'Review and approve pending inventory documents',
+            icon: 'pending_actions',
+            color: 'var(--yellow)',
+            timestamp: now,
+            screenId: 'reports',
+          });
+        }
+        if ((d.pendingInwardCount as number) > 0) {
+          items.push({
+            id: 'pending-inward',
+            message: `${d.pendingInwardCount} items awaiting inward`,
+            detail: 'Complete pending store receipt entries',
+            icon: 'move_to_inbox',
+            color: 'var(--blue)',
+            timestamp: now,
+            screenId: 'inward-entry',
+          });
+        }
+        if ((d.lowStockCount as number) > 0) {
+          items.push({
+            id: 'low-stock',
+            message: `${d.lowStockCount} items below reorder level`,
+            detail: 'Review low-stock items and create purchase requests',
+            icon: 'warning',
+            color: 'var(--red)',
+            timestamp: now,
+            screenId: 'current-stock',
+          });
+        }
+      }
+    } catch { /* best-effort */ }
+
+    try {
+      if (can('quality', 'View')) {
+        const res = await apiClient.get('/quality/inspections');
+        const data = res.data as Record<string, unknown>;
+        const list = (data.content ?? data) as unknown[];
+        if (Array.isArray(list)) {
+          const pending = list.filter((i: Record<string, unknown>) => i.status === 'PENDING');
+          if (pending.length > 0) {
+            items.push({
+              id: 'quality-pending',
+              message: `${pending.length} inspections pending`,
+              detail: 'Quality inspections require attention',
+              icon: 'fact_check',
+              color: 'var(--purple)',
+              timestamp: now,
+              screenId: 'inspection-pending',
+            });
+          }
+        }
+      }
+    } catch { /* best-effort */ }
+
+    setNotifications(items);
+  }, [can]);
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, NOTIF_POLL_MS);
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
+
   return (
     <>
-      {/* ---- Global Search Popup ---- */}
       {searchOpen && (
         <div className="search-pop" onClick={() => setSearchOpen(false)}>
           <div className="search-box" onClick={(e) => e.stopPropagation()}>
@@ -141,13 +431,13 @@ export default function MainLayout() {
               <input
                 ref={searchRef}
                 className="in"
-                placeholder="Type to search screens..."
+                placeholder="Type to search screens and records..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && searchResults.length > 0) {
-                    openSearchResult(searchResults[0]);
-                  }
+                  if (e.key !== 'Enter') return;
+                  if (searchResults.length > 0) openSearchResult(searchResults[0]);
+                  else if (recordResults.length > 0) openRecord(recordResults[0]);
                 }}
                 style={{ flex: 1, fontSize: 15 }}
               />
@@ -157,36 +447,69 @@ export default function MainLayout() {
               {!searchQuery.trim() ? (
                 <div style={{ padding: 20, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
                   <span className="material-symbols-rounded" style={{ fontSize: 28, display: 'block', margin: '0 auto 6px', opacity: 0.4 }}>search</span>
-                  Type to search screens...
+                  Type to search screens and records...
                 </div>
-              ) : searchResults.length > 0 ? searchResults.map((r, i) => (
-                <button
-                  key={r.id}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px',
-                    border: 'none', background: i === 0 ? 'var(--blue-bg)' : 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
-                    fontSize: 14, color: 'var(--text)',
-                  }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = i === 0 ? 'var(--blue-bg)' : 'none')}
-                  onClick={() => openSearchResult(r)}
-                >
-                  <span className="material-symbols-rounded" style={{ fontSize: 18, color: 'var(--muted)' }}>{r.icon}</span>
-                  {r.label}
-                  {i === 0 && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Enter ↵</span>}
-                </button>
-              )              ) : (
-                <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
-                  <span className="material-symbols-rounded" style={{ fontSize: 32, display: 'block', margin: '0 auto 8px', opacity: 0.3 }}>search_off</span>
-                  No results for "<b>{searchQuery}</b>"
-                </div>
+              ) : (
+                <>
+                  {searchResults.map((r, i) => (
+                    <button
+                      key={r.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px',
+                        border: 'none', background: i === 0 ? 'var(--blue-bg)' : 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                        fontSize: 14, color: 'var(--text)',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = i === 0 ? 'var(--blue-bg)' : 'none')}
+                      onClick={() => openSearchResult(r)}
+                    >
+                      <span className="material-symbols-rounded" style={{ fontSize: 18, color: 'var(--muted)' }}>{r.icon}</span>
+                      {r.label}
+                      {i === 0 && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Enter ↵</span>}
+                    </button>
+                  ))}
+                  {(recordResults.length > 0 || recordsLoading) && (
+                    <div style={{ padding: searchResults.length > 0 ? '12px 12px 4px' : '4px 12px', fontSize: 11, letterSpacing: 1, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                      Records{recordsLoading ? '…' : ''}
+                    </div>
+                  )}
+                  {recordResults.map((r, i) => (
+                    <button
+                      key={r.key}
+                      style={{
+                        display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', padding: '8px 12px',
+                        border: 'none', background: 'none', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                      onClick={() => openRecord(r)}
+                    >
+                      <span className="material-symbols-rounded" style={{ fontSize: 18, color: 'var(--muted)', marginTop: 2 }}>{r.icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <b style={{ fontSize: 13, color: 'var(--text)' }}>{r.title}</b>
+                          <span style={{ fontSize: 10, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 999, padding: '1px 7px' }}>{r.typeLabel}</span>
+                          {searchResults.length === 0 && i === 0 && <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>Enter ↵</span>}
+                        </div>
+                        {r.subtitle && (
+                          <small style={{ display: 'block', color: 'var(--muted)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.subtitle}</small>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                  {searchResults.length === 0 && recordResults.length === 0 && !recordsLoading && (
+                    <div style={{ padding: '30px 20px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                      <span className="material-symbols-rounded" style={{ fontSize: 32, display: 'block', margin: '0 auto 8px', opacity: 0.3 }}>search_off</span>
+                      No results for "<b>{searchQuery}</b>"
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>
         </div>
       )}
 
-      {/* ---- Header ---- */}
       <header className="topbar">
         <div className="brand">
           <div className="brand-logo">Z</div>
@@ -197,55 +520,52 @@ export default function MainLayout() {
         </div>
 
         <div className="top-actions">
-          {/* Search */}
           <button className="icon-btn" title="Search (Ctrl+K)" onClick={() => setSearchOpen(true)}>
             <span className="material-symbols-rounded">search</span>
           </button>
 
-          {/* Dark Mode Toggle */}
           <button className="icon-btn" title={theme === 'dark' ? 'Light Mode' : 'Dark Mode'} onClick={toggleTheme}>
             <span className="material-symbols-rounded">{theme === 'dark' ? 'light_mode' : 'dark_mode'}</span>
           </button>
 
-          {/* Notifications */}
           <div ref={notifRef} style={{ position: 'relative' }}>
             <button className="icon-btn" title="Notifications" onClick={() => { setNotifOpen((o) => !o); setProfileOpen(false); }}>
               <span className="material-symbols-rounded">notifications</span>
-              <span className="n-badge">3</span>
+              {notifications.length > 0 && <span className="n-badge">{notifications.length}</span>}
             </button>
             {notifOpen && (
               <div className="pop show">
                 <div className="p-head">
                   <b style={{ fontSize: 13 }}>Notifications</b>
-                  <small>3 unread</small>
+                  <small>{notifications.length} unread</small>
                 </div>
                 <hr />
-                <a href="#" onClick={(e) => e.preventDefault()}>
-                  <span className="material-symbols-rounded" style={{ color: 'var(--blue)' }}>info</span>
-                  <div>
-                    <b style={{ fontSize: 12 }}>System Ready</b>
-                    <small style={{ display: 'block', color: 'var(--muted)', fontSize: 11 }}>ERP modules loaded successfully</small>
+                {notifications.length === 0 ? (
+                  <div style={{ padding: 20, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+                    <span className="material-symbols-rounded" style={{ fontSize: 28, display: 'block', margin: '0 auto 6px', opacity: 0.4 }}>notifications_off</span>
+                    No pending notifications
                   </div>
-                </a>
-                <a href="#" onClick={(e) => e.preventDefault()}>
-                  <span className="material-symbols-rounded" style={{ color: 'var(--green)' }}>check_circle</span>
-                  <div>
-                    <b style={{ fontSize: 12 }}>Database Connected</b>
-                    <small style={{ display: 'block', color: 'var(--muted)', fontSize: 11 }}>PostgreSQL connection active</small>
-                  </div>
-                </a>
-                <a href="#" onClick={(e) => e.preventDefault()}>
-                  <span className="material-symbols-rounded" style={{ color: 'var(--yellow)' }}>warning</span>
-                  <div>
-                    <b style={{ fontSize: 12 }}>Pending Updates</b>
-                    <small style={{ display: 'block', color: 'var(--muted)', fontSize: 11 }}>3 planning modules need review</small>
-                  </div>
-                </a>
+                ) : notifications.map((n) => (
+                  <a
+                    key={n.id}
+                    href="#"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (n.screenId) openNotifScreen(n.screenId);
+                      setNotifOpen(false);
+                    }}
+                  >
+                    <span className="material-symbols-rounded" style={{ color: n.color }}>{n.icon}</span>
+                    <div>
+                      <b style={{ fontSize: 12 }}>{n.message}</b>
+                      <small style={{ display: 'block', color: 'var(--muted)', fontSize: 11 }}>{n.detail}</small>
+                    </div>
+                  </a>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Profile */}
           <div ref={profileRef} className="pop-wrap">
             <button className="profile-btn" onClick={() => { setProfileOpen((o) => !o); setNotifOpen(false); }}>
               <div className="avatar">{user?.username?.[0]?.toUpperCase() || 'U'}</div>
@@ -258,17 +578,23 @@ export default function MainLayout() {
                   <div className="avatar big">{user?.username?.[0]?.toUpperCase() || 'U'}</div>
                   <div>
                     <b style={{ fontSize: 13 }}>{user?.username || 'User'}</b>
-                    <small>{user?.role || 'User'}</small>
+                    <small style={{ textTransform: 'capitalize' }}>{user?.role || 'User'}</small>
                   </div>
                 </div>
                 <hr />
-                <a href="#" onClick={(e) => { e.preventDefault(); }}>
+                <a href="#" onClick={(e) => {
+                  e.preventDefault();
+                  openScreen({ id: 'user-management', label: 'My Profile', icon: 'person' });
+                }}>
                   <span className="material-symbols-rounded">person</span>
                   My Profile
                 </a>
-                <a href="#" onClick={(e) => { e.preventDefault(); }}>
+                <a href="#" onClick={(e) => {
+                  e.preventDefault();
+                  toggleTheme();
+                }}>
                   <span className="material-symbols-rounded">settings</span>
-                  Settings
+                  {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
                 </a>
                 <a href="#" onClick={(e) => { e.preventDefault(); }}>
                   <span className="material-symbols-rounded">help</span>
@@ -285,7 +611,7 @@ export default function MainLayout() {
         </div>
       </header>
 
-      <Navigation onNavigate={openScreen} />
+      <Navigation items={filteredNavItems} onNavigate={openScreen} />
 
       <div className="tabbar">
         {tabs.map((tab) => (

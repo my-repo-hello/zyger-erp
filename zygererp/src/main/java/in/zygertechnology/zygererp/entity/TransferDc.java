@@ -4,6 +4,7 @@ import jakarta.persistence.*; import lombok.*;
 public class TransferDc extends BaseDoc implements DocEntity {
     String party;
     String sourceLocation;
+    String destinationLocation;
     String vehicleNo;
     String transporter;
     String linkedDocumentNo;

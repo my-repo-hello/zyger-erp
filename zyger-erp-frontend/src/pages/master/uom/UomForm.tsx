@@ -25,6 +25,15 @@ export default function UomForm({ uomId, viewOnly = false, onBack, onSaved }: Pr
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const openNew = async () => {
+    setForm(defaultForm());
+    setEditId(null);
+    try {
+      const { data } = await apiClient.get('/master/uoms/next-code');
+      setForm((c) => ({ ...c, code: data.code }));
+    } catch { /* code field will remain empty if fetch fails */ }
+  };
+
   useEffect(() => {
     if (!uomId) {
       setForm(defaultForm());
@@ -49,19 +58,6 @@ export default function UomForm({ uomId, viewOnly = false, onBack, onSaved }: Pr
       onBack();
     }).finally(() => setLoading(false));
   }, [uomId]);
-
-  const openNew = async () => {
-    setForm(defaultForm());
-    setEditId(null);
-    try {
-      const { data } = await apiClient.get('/master/uoms/next-code');
-      setForm((c) => ({ ...c, code: data.code }));
-    } catch { /* code field will remain empty if fetch fails */ }
-  };
-
-  useEffect(() => {
-    if (!uomId) openNew();
-  }, []);
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
 

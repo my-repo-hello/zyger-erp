@@ -33,6 +33,7 @@ export interface DeliveryChallanPayload {
   date: string;
   party: string;
   sourceLocation: string;
+  destinationLocation?: string;
   vehicleNo?: string;
   transporter?: string;
   linkedDocumentNo?: string;

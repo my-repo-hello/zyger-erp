@@ -29,6 +29,17 @@ export default function SubcontractorForm({ customerId, viewOnly = false, onBack
 
   const toggleSec = (key: keyof typeof openSec) => setOpenSec(c => ({ ...c, [key]: !c[key] }));
 
+  const openNew = async () => {
+    setForm(defaultForm());
+    setEditId(null);
+    try {
+      const { data } = await apiClient.get('/master/parties/next-code?kind=SUBCONTRACTOR');
+      setForm((c) => ({ ...c, code: data.code }));
+    } catch {
+      setForm((c) => ({ ...c, code: 'SUB-0002' }));
+    }
+  };
+
   useEffect(() => {
     if (!customerId) {
       setForm(defaultForm());
@@ -46,17 +57,6 @@ export default function SubcontractorForm({ customerId, viewOnly = false, onBack
       onBack();
     }).finally(() => setLoading(false));
   }, [customerId]);
-
-  const openNew = async () => {
-    setForm(defaultForm());
-    setEditId(null);
-    try {
-      const { data } = await apiClient.get('/master/parties/next-code?kind=SUBCONTRACTOR');
-      setForm((c) => ({ ...c, code: data.code }));
-    } catch {
-      setForm((c) => ({ ...c, code: 'SUB-0002' }));
-    }
-  };
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
 
@@ -209,8 +209,6 @@ export default function SubcontractorForm({ customerId, viewOnly = false, onBack
                 <select className="in" value={String(form.visibleTo ?? '')} onChange={e => updateForm('visibleTo', e.target.value)} disabled={viewOnly}>
                   <option value="">Please Select</option>
                   <option value="All Plants">All Plants</option>
-                  <option value="Plant 1">Plant 1</option>
-                  <option value="Plant 2">Plant 2</option>
                 </select>
               </label>
             </div>

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface PowerConsumption {
   id: number;
@@ -30,6 +32,7 @@ const SC: Record<string, { color: string; bg: string }> = {
 
 export default function PowerConsumptionScreen() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [rows, setRows] = useState<PowerConsumption[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<Record<string, unknown>>({});
@@ -137,14 +140,14 @@ export default function PowerConsumptionScreen() {
                       <td>{r.closingReading}</td>
                       <td>{r.consumption ?? '-'}</td>
                       <td>{r.unit ?? 'kWh'}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>
                         <div style={{ position: 'relative' }}>
                           <button className="ibtn" title="Actions" onClick={() => setOpenActionMenu(openActionMenu === r.id ? null : r.id)}><span className="material-symbols-rounded">more_vert</span></button>
                           {openActionMenu === r.id && (
                             <div style={{ position: 'absolute', right: 0, top: '100%', background: '#fff', border: '1px solid #ddd', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,.12)', zIndex: 10, minWidth: 140 }}>
                               {r.status === 'DRAFT' && <button className="ibtn" style={{ width: '100%', textAlign: 'left' }} onClick={() => { action(r.id, 'verify'); setOpenActionMenu(null); }}>Verify</button>}
-                              {r.status === 'VERIFIED' && <button className="ibtn" style={{ width: '100%', textAlign: 'left' }} onClick={() => { action(r.id, 'approve'); setOpenActionMenu(null); }}>Approve</button>}
+                              {r.status === 'VERIFIED' && can('maintenance', 'Approve') && <button className="ibtn" style={{ width: '100%', textAlign: 'left' }} onClick={() => { action(r.id, 'approve'); setOpenActionMenu(null); }}>Approve</button>}
                               <button className="ibtn" style={{ width: '100%', textAlign: 'left' }} onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); setOpenActionMenu(null); }}>Edit</button>
                               <button className="ibtn" style={{ width: '100%', textAlign: 'left', color: '#991b1b' }} onClick={() => { setDeleteTarget(r); setOpenActionMenu(null); }}>Delete</button>
                             </div>

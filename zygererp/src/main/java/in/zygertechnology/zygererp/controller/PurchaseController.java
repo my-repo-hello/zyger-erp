@@ -2,8 +2,10 @@ package in.zygertechnology.zygererp.controller;
 
 import in.zygertechnology.zygererp.service.DocumentFacade;
 import in.zygertechnology.zygererp.service.ExportService;
+import in.zygertechnology.zygererp.service.JobOrderReconciliationService;
 import in.zygertechnology.zygererp.service.PrintService;
 import in.zygertechnology.zygererp.service.PurchaseService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -24,6 +26,7 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/v1/purchase")
+@RequirePermission(module = "PURCHASE", screen = "*", action = "VIEW")
 @RequiredArgsConstructor
 public class PurchaseController {
 
@@ -37,6 +40,7 @@ public class PurchaseController {
     private final PurchaseService purchase;
     private final ExportService export;
     private final PrintService printer;
+    private final JobOrderReconciliationService joReconciliation;
 
     private static String key(String type) {
         if (!ALLOWED.contains(type)) {
@@ -60,6 +64,11 @@ public class PurchaseController {
     @GetMapping("/{type}/{id}")
     Map<String, Object> get(@PathVariable String type, @PathVariable Long id) {
         return svc.getRow(key(type), id);
+    }
+
+    @GetMapping("/job-orders/{id}/reconciliation")
+    Map<String, Object> jobOrderReconciliation(@PathVariable Long id) {
+        return joReconciliation.reconciliation(id);
     }
 
     @PutMapping("/{type}/{id}")

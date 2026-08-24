@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface PmScheduleOption {
   id: number;
@@ -46,6 +48,7 @@ const RESULTS = ['PASS', 'PASS_WITH_OBSERVATION', 'REQUIRES_REPAIR', 'FAILED'];
 
 export default function PmCompletionScreen() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [rows, setRows] = useState<PmCompletion[]>([]);
   const [schedules, setSchedules] = useState<PmScheduleOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -173,7 +176,7 @@ export default function PmCompletionScreen() {
                       <td>{r.machineCode}</td>
                       <td>{r.technicianCode ?? '-'}</td>
                       <td>{(r.result ?? '-').replace(/_/g, ' ')}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>{r.verified ? <span className="material-symbols-rounded" style={{ color: '#22c55e', fontSize: 18 }}>check_circle</span> : <span className="material-symbols-rounded" style={{ color: '#ccc', fontSize: 18 }}>radio_button_unchecked</span>}</td>
                       <td style={{ position: 'relative' }}>
                         <button className="ibtn" title="Actions" onClick={(e) => { e.stopPropagation(); setOpenActionMenu(openActionMenu === r.id ? null : r.id); }}>
@@ -181,7 +184,7 @@ export default function PmCompletionScreen() {
                         </button>
                         {openActionMenu === r.id && (
                           <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 20, background: 'var(--card-bg, #fff)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: 180, padding: '4px 0' }} onClick={(e) => e.stopPropagation()}>
-                            {r.status === 'DRAFT' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'submit'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>send</span> Submit</button>}
+                            {r.status === 'DRAFT' && can('maintenance', 'Edit') && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'submit'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>send</span> Submit</button>}
                             {r.status === 'SUBMITTED' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'complete'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#22c55e' }}>check_circle</span> Complete</button>}
                             {r.status === 'COMPLETED' && !r.verified && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'verify'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#0d9488' }}>verified</span> Verify</button>}
                             {r.status === 'SUBMITTED' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'fail'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#ef4444' }}>cancel</span> Fail</button>}

@@ -44,7 +44,7 @@ export default function LoginPage() {
     const errs: Record<string, string> = {};
 
     if (mode === 'login') {
-      if (!username.trim()) errs.username = 'Username or email is required';
+      if (!username.trim()) errs.username = 'Username is required';
       if (!password) errs.password = 'Password is required';
     } else if (mode === 'signup') {
       if (!displayName.trim()) errs.displayName = 'Display name is required';
@@ -52,7 +52,11 @@ export default function LoginPage() {
       if (!email.trim()) errs.email = 'Email is required';
       else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errs.email = 'Enter a valid email address';
       if (!password) errs.password = 'Password is required';
-      else if (password.length < 6) errs.password = 'Password must be at least 6 characters';
+      else if (password.length < 8) errs.password = 'Password must be at least 8 characters';
+      else if (!/[A-Z]/.test(password)) errs.password = 'Password must contain an uppercase letter';
+      else if (!/[a-z]/.test(password)) errs.password = 'Password must contain a lowercase letter';
+      else if (!/\d/.test(password)) errs.password = 'Password must contain a digit';
+      else if (!/[^A-Za-z0-9]/.test(password)) errs.password = 'Password must contain a special character';
       if (password !== confirmPassword) errs.confirmPassword = 'Passwords do not match';
     } else if (mode === 'forgot') {
       if (!email.trim()) errs.email = 'Email is required';
@@ -86,9 +90,8 @@ export default function LoginPage() {
           email: email.trim(),
           password,
         });
-        sessionStorage.setItem('zyger-access-token', res.token);
-        sessionStorage.setItem('zyger-user', JSON.stringify({ username: res.username, role: res.role }));
-        navigate('/');
+        setSuccess(res.message || 'Registration successful. Your account is pending admin approval.');
+        setTimeout(() => setMode('login'), 3000);
       } else if (mode === 'forgot') {
         const res = await authApi.forgotPassword({ email: email.trim() });
         setSuccess(res.message);
@@ -102,7 +105,18 @@ export default function LoginPage() {
     }
   };
 
-  const handleDemo = () => { loginDemo(); navigate('/'); };
+  const handleDemo = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      await loginDemo();
+      navigate('/');
+    } catch (err: any) {
+      setError(err?.message || 'Demo login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const switchMode = (next: Mode) => {
     setMode(next);
@@ -296,7 +310,7 @@ export default function LoginPage() {
               <div>
                 <FieldLabel label="Password" />
                 <div style={{ position: 'relative' }}>
-                  <input className="lgp-input" style={{ ...(fieldErrors.password ? errorInputStyle : inputStyle), paddingRight: 44 }} type={showPw ? 'text' : 'password'} placeholder={mode === 'login' ? 'Enter your password' : 'Minimum 6 characters'} value={password} onChange={e => setPassword(e.target.value)} onFocus={focusStyle} onBlur={blurStyle} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+                  <input className="lgp-input" style={{ ...(fieldErrors.password ? errorInputStyle : inputStyle), paddingRight: 44 }} type={showPw ? 'text' : 'password'} placeholder={mode === 'login' ? 'Enter your password' : 'Min 8 chars: upper, lower, number, special'} value={password} onChange={e => setPassword(e.target.value)} onFocus={focusStyle} onBlur={blurStyle} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
                   <button type="button" onClick={() => setShowPw(!showPw)} style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--muted)', padding: 6, borderRadius: 6, cursor: 'pointer' }}>
                     <span className="material-symbols-rounded" style={{ fontSize: 20 }}>{showPw ? 'visibility_off' : 'visibility'}</span>
                   </button>

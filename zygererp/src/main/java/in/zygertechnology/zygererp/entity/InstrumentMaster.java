@@ -2,11 +2,13 @@ package in.zygertechnology.zygererp.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
 @Entity @Table(name = "instrument_master")
+@EntityListeners(AuditEntityListener.class)
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class InstrumentMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;

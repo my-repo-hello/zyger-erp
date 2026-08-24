@@ -2,6 +2,7 @@ package in.zygertechnology.zygererp.controller;
 
 import in.zygertechnology.zygererp.repo.QualityCalibrationInstrumentRepository;
 import in.zygertechnology.zygererp.service.QualitySupportService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
@@ -11,6 +12,7 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/v1/quality")
+@RequirePermission(module = "QUALITY", screen = "CALIBRATION_INSTRUMENT", action = "VIEW")
 @RequiredArgsConstructor
 public class QualityCalibrationController {
 

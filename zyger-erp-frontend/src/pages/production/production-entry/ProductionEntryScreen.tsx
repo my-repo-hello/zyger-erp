@@ -1,9 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 import { printDocument as printDoc } from '../../../utils/printDocument';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface ProductionEntry {
   id: number;
@@ -44,6 +47,7 @@ const QS: Record<string, { color: string; bg: string }> = {
 
 export default function ProductionEntryScreen() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [rows, setRows] = useState<ProductionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<Record<string, unknown>>({});
@@ -52,6 +56,9 @@ export default function ProductionEntryScreen() {
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'list' | 'form'>('list');
+  const [jcLookup, setJcLookup] = useState('');
+  const [jcLoading, setJcLoading] = useState(false);
+  const [jcOptions, setJcOptions] = useState<Array<{ jobCardNumber: string; partCode: string; partDescription: string; machineCode: string; workOrderNumber: string; subjobs?: Array<{ subjobNumber: string; operationCode: string; machineCode: string; workCenterCode: string }> }>>([]);
 
   const load = async () => {
     setLoading(true);
@@ -63,6 +70,36 @@ export default function ProductionEntryScreen() {
   };
 
   useEffect(() => { load(); }, []);
+
+  const fetchJobCards = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get('/v1/production/job-cards', { params: { size: 50 } });
+      const list = Array.isArray(data) ? data : data.content ?? [];
+      setJcOptions(list);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (tab === 'form' && !editId) fetchJobCards(); }, [tab, editId, fetchJobCards]);
+
+  const handleJcSelect = (jcNumber: string) => {
+    setJcLookup(jcNumber);
+    const jc = jcOptions.find((j) => j.jobCardNumber === jcNumber);
+    if (jc) {
+      const firstSubjob = jc.subjobs?.[0];
+      setForm((prev) => ({
+        ...prev,
+        jobCardNumber: jc.jobCardNumber,
+        workOrderNumber: jc.workOrderNumber || prev.workOrderNumber || '',
+        partCode: jc.partCode || prev.partCode || '',
+        partDescription: jc.partDescription || prev.partDescription || '',
+        machineCode: firstSubjob?.machineCode || jc.machineCode || prev.machineCode || '',
+        operationCode: firstSubjob?.operationCode || prev.operationCode || '',
+        shiftCode: prev.shiftCode || '',
+        productionDate: prev.productionDate || new Date().toISOString().split('T')[0],
+      }));
+      toast('Job card details auto-filled.');
+    }
+  };
 
   const save = async () => {
     if (!String(form.workOrderNumber ?? '').trim()) { toast('Work Order Number is required.', 'error'); return; }
@@ -111,6 +148,14 @@ export default function ProductionEntryScreen() {
     return (r.entryNumber ?? '').toLowerCase().includes(q) || (r.partCode ?? '').toLowerCase().includes(q) || (r.workOrderNumber ?? '').toLowerCase().includes(q);
   });
 
+  const produced = Number(form.producedQuantity ?? 0);
+  const good = Number(form.goodQuantity ?? 0);
+  const rework = Number(form.reworkQuantity ?? 0);
+  const rejected = Number(form.rejectedQuantity ?? 0);
+  const scrap = Number(form.scrapQuantity ?? 0);
+  const subTotal = good + rework + rejected + scrap;
+  const reconciliationOk = produced === 0 || subTotal === produced;
+
   return (
     <>
       <div className="pg-head"><h1>Production Entry</h1><p>Record actual production against work orders and job cards</p></div>
@@ -118,6 +163,22 @@ export default function ProductionEntryScreen() {
       {tab === 'form' && (
         <div className="panel">
           <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Production Entry</h2></div>
+
+          {!editId && jcOptions.length > 0 && (
+            <div style={{ padding: '0 16px 12px', background: '#f0f7ff', borderRadius: 8, marginBottom: 12, border: '1px solid #bfdbfe' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>link</span>
+                <span style={{ fontWeight: 600, fontSize: 13, color: '#1e40af' }}>Quick Fill from Job Card</span>
+              </div>
+              <select className="in" value={jcLookup} onChange={(e) => handleJcSelect(e.target.value)}>
+                <option value="">Select Job Card to auto-fill fields...</option>
+                {jcOptions.map((jc) => (
+                  <option key={jc.jobCardNumber} value={jc.jobCardNumber}>{jc.jobCardNumber} | {jc.partCode} | {jc.partDescription || 'N/A'}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="fgrid">
             <label className="fld"><span>Work Order No *</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
             <label className="fld"><span>Job Card No</span><input className="in" value={String(form.jobCardNumber ?? '')} onChange={(e) => set('jobCardNumber', e.target.value)} /></label>
@@ -138,10 +199,17 @@ export default function ProductionEntryScreen() {
             <label className="fld"><span>Scrap Qty</span><input className="in" type="number" value={String(form.scrapQuantity ?? '')} onChange={(e) => set('scrapQuantity', Number(e.target.value))} /></label>
             <label className="fld"><span>Remarks</span><input className="in" value={String(form.remarks ?? '')} onChange={(e) => set('remarks', e.target.value)} /></label>
           </div>
+
+          {produced > 0 && (
+            <div style={{ padding: '8px 16px', marginTop: 8, borderRadius: 6, fontSize: 13, background: reconciliationOk ? '#d4edda' : '#f8d7da', color: reconciliationOk ? '#155724' : '#721c24', border: `1px solid ${reconciliationOk ? '#c3e6cb' : '#f5c6cb'}` }}>
+              <b>Qty Reconciliation:</b> Good({good}) + Rework({rework}) + Rejected({rejected}) + Scrap({scrap}) = {subTotal} {reconciliationOk ? `= Produced(${produced}) OK` : `!= Produced(${produced}) ERROR: must sum to ${produced}`}
+            </div>
+          )}
+
           <div className="actbar">
             <span className="lft">{editId && <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }} disabled={busy}>Cancel</button>}</span>
             <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }}>Back</button>
-            <button className="btn btn-p" onClick={save} disabled={busy}>{editId ? 'Update' : 'Create'}</button>
+            {can('production', 'Edit') && <button className="btn btn-p" onClick={save} disabled={busy}>{editId ? 'Update' : 'Create'}</button>}
           </div>
         </div>
       )}
@@ -150,6 +218,19 @@ export default function ProductionEntryScreen() {
         <div className="panel">
           <div className="toolbar">
             <input className="in" placeholder="Search entries..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(filtered as unknown as Record<string, unknown>[], [
+              { key: 'entryNumber', label: 'Doc No' },
+              { key: 'productionDate', label: 'Date' },
+              { key: 'partCode', label: 'Part' },
+              { key: 'machineCode', label: 'Machine' },
+              { key: 'operationCode', label: 'Operation' },
+              { key: 'goodQuantity', label: 'Good Qty' },
+              { key: 'reworkQuantity', label: 'Rework Qty' },
+              { key: 'rejectedQuantity', label: 'Rejected Qty' },
+              { key: 'scrapQuantity', label: 'Scrap Qty' },
+              { key: 'producedQuantity', label: 'Produced Qty' },
+              { key: 'status', label: 'Status' },
+            ], 'production-entries')}><span className="material-symbols-rounded">download</span></button>
             <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Entry</button>
           </div>
           <div className="twrap">
@@ -167,11 +248,11 @@ export default function ProductionEntryScreen() {
                       <td>{r.producedQuantity}</td>
                       <td style={{ color: '#22c55e' }}>{r.goodQuantity}</td>
                       <td style={{ color: r.scrapQuantity > 0 ? '#ef4444' : undefined }}>{r.scrapQuantity}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (QS[r.qualityStatus] ?? QS.PENDING).color, background: (QS[r.qualityStatus] ?? QS.PENDING).bg }}>{r.qualityStatus}</span></td>
                       <td>
-                        {r.status === 'DRAFT' && <button className="ibtn" title="Submit" onClick={() => action(r.id, 'submit')}><span className="material-symbols-rounded">send</span></button>}
-                        {r.status === 'SUBMITTED' && <><button className="ibtn" title="Approve" onClick={() => action(r.id, 'approve')}><span className="material-symbols-rounded">check_circle</span></button><button className="ibtn" title="Reject" onClick={() => action(r.id, 'reject')}><span className="material-symbols-rounded">cancel</span></button></>}
+                        {r.status === 'DRAFT' && can('production', 'Edit') && <button className="ibtn" title="Submit" onClick={() => action(r.id, 'submit')}><span className="material-symbols-rounded">send</span></button>}
+                        {r.status === 'SUBMITTED' && <>{can('production', 'Approve') && <button className="ibtn" title="Approve" onClick={() => action(r.id, 'approve')}><span className="material-symbols-rounded">check_circle</span></button>}{can('production', 'Reject') && <button className="ibtn" title="Reject" onClick={() => action(r.id, 'reject')}><span className="material-symbols-rounded">cancel</span></button>}</>}
                         {r.status === 'APPROVED' && r.qualityStatus === 'PENDING' && <><button className="ibtn" title="Quality Pass" onClick={() => action(r.id, 'quality-pass')}><span className="material-symbols-rounded">verified</span></button><button className="ibtn" title="Quality Fail" onClick={() => action(r.id, 'quality-fail')}><span className="material-symbols-rounded">gpp_bad</span></button><button className="ibtn" title="Quality Hold" onClick={() => action(r.id, 'quality-hold')}><span className="material-symbols-rounded">pause_circle</span></button></>}
                         <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
                         <button className="ibtn" title="Print" onClick={() => printDocument(r.id, 'print')}><span className="material-symbols-rounded">print</span></button>

@@ -19,6 +19,17 @@ export default function ItemGroupForm({ itemGroupId, viewOnly = false, onBack, o
   const [loading, setLoading] = useState(false);
   const [openSec, setOpenSec] = useState(true);
 
+  const openNew = async () => {
+    setForm(defaultForm());
+    setEditId(null);
+    try {
+      const { data } = await apiClient.get('/master/item-groups/next-code');
+      setForm((c) => ({ ...c, code: data.code }));
+    } catch {
+      setForm((c) => ({ ...c, code: `IG-${Date.now().toString(36).toUpperCase()}` }));
+    }
+  };
+
   useEffect(() => {
     if (!itemGroupId) {
       setForm(defaultForm());
@@ -43,17 +54,6 @@ export default function ItemGroupForm({ itemGroupId, viewOnly = false, onBack, o
       onBack();
     }).finally(() => setLoading(false));
   }, [itemGroupId]);
-
-  const openNew = async () => {
-    setForm(defaultForm());
-    setEditId(null);
-    try {
-      const { data } = await apiClient.get('/master/item-groups/next-code');
-      setForm((c) => ({ ...c, code: data.code }));
-    } catch {
-      setForm((c) => ({ ...c, code: `IG-${Date.now().toString(36).toUpperCase()}` }));
-    }
-  };
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
 

@@ -44,6 +44,9 @@ public class CostEstimation {
     @Column(nullable = false, length = 20)
     String status;
 
+    @Column(name = "is_active_quote")
+    Boolean isActiveQuote = false;
+
     @Column(name = "currency_code", length = 10)
     String currencyCode;
 

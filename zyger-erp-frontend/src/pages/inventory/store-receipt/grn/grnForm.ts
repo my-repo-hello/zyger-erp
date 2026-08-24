@@ -15,6 +15,7 @@ export interface GrnLineFormState {
   itemCode: string;
   itemDesc: string;
   uom: string;
+  inspectedQty: string;
   acceptedQty: string;
   rate: string;
   amount: string;
@@ -37,6 +38,7 @@ export interface GrnFormState {
 
 const DIRTY_LINE_KEYS: Array<keyof GrnLineFormState> = [
   'itemCode',
+  'inspectedQty',
   'acceptedQty',
   'rate',
   'rejectedQty',
@@ -51,6 +53,7 @@ export function createEmptyLine(): GrnLineFormState {
     itemCode: '',
     itemDesc: '',
     uom: '',
+    inspectedQty: '',
     acceptedQty: '',
     rate: '',
     amount: '',
@@ -90,6 +93,7 @@ function lineFromDto(
     itemCode: line.itemCode ?? '',
     itemDesc: line.itemDesc ?? item?.description ?? '',
     uom: line.uom ?? item?.uom ?? '',
+    inspectedQty: line.inspectedQty?.toString() ?? '',
     acceptedQty: line.acceptedQty?.toString() ?? '',
     rate: line.rate?.toString() ?? '',
     amount: line.amount?.toString() ?? '',
@@ -133,6 +137,7 @@ export function buildPayload(form: GrnFormState): GrnPayload {
     remarks: form.remarks.trim() || undefined,
     lines: activeLines.map((line) => ({
       itemCode: line.itemCode.trim(),
+      inspectedQty: toOptionalNumber(line.inspectedQty),
       acceptedQty: toNumber(line.acceptedQty),
       rate: toOptionalNumber(line.rate),
       rejectedQty: toOptionalNumber(line.rejectedQty),
@@ -188,6 +193,17 @@ export function validateGrnForm(
 
     if (!line.location.trim()) {
       errors.push(`Line ${lineNo}: Location is required.`);
+    }
+
+    const inspected = toOptionalNumber(line.inspectedQty);
+    if (inspected !== undefined) {
+      const accepted = toNumber(line.acceptedQty) || 0;
+      const rejected = toOptionalNumber(line.rejectedQty) ?? 0;
+      if (accepted + rejected > inspected) {
+        errors.push(
+          `Line ${lineNo}: Accepted (${accepted}) + Rejected (${rejected}) exceeds Inspected Qty (${inspected}).`
+        );
+      }
     }
 
     if (strict && line.itemCode) {

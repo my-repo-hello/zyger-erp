@@ -2,6 +2,10 @@
 import type { ComponentType } from 'react';
 import ModulePlaceholder from '../components/common/ModulePlaceholder';
 import DashboardPage from '../pages/dashboard/DashboardPage';
+import SalesDashboard from '../pages/sales/dashboard/SalesDashboard';
+import PurchaseDashboard from '../pages/purchase/dashboard/PurchaseDashboard';
+import PlanningDashboard from '../pages/planning/dashboard/PlanningDashboard';
+import ProductionDashboard from '../pages/production/dashboard/ProductionDashboard';
 import InwardEntryPage from '../pages/inventory/inward/InwardEntryPage';
 import PoInwardPage from '../pages/inventory/inward/po-inward/PoInwardPage';
 import GrnPage from '../pages/inventory/store-receipt/grn/GrnPage';
@@ -61,6 +65,7 @@ import SalesDcSalesPage from '../pages/sales/dc/SalesDcSalesPage';
 import SalesInvoicePage from '../pages/sales/invoice/SalesInvoicePage';
 import DcReturnSalesPage from '../pages/sales/return/dc/DcReturnSalesPage';
 import InvoiceReturnSalesPage from '../pages/sales/return/invoice/InvoiceReturnSalesPage';
+import SoSchedulePage from '../pages/sales/schedule/SoSchedulePage';
 import ConcessionPage from '../pages/quality/concession/ConcessionPage';
 import InwardTestCertificatePage from '../pages/quality/certificate/InwardTestCertificatePage';
 import InternalTestCertificatePage from '../pages/quality/certificate/InternalTestCertificatePage';
@@ -68,6 +73,8 @@ import OutwardTestCertificatePage from '../pages/quality/certificate/OutwardTest
 import ComplaintPage from '../pages/quality/complaint/ComplaintPage';
 import CapaPage from '../pages/quality/capa/CapaPage';
 import EightDPage from '../pages/quality/eight-d/EightDPage';
+import TraceabilityPage from '../pages/quality/traceability/TraceabilityPage';
+import SpcPage from '../pages/quality/SpcPage';
 import BomPage from '../pages/planning/bom/BomPage';
 import RouteSheetPage from '../pages/planning/route/RouteSheetPage';
 import WorkOrderPage from '../pages/planning/workorder/WorkOrderPage';
@@ -124,7 +131,16 @@ import SupplierListScreen from '../pages/master/suppliers/SupplierListScreen';
 import UserScreen from '../pages/master/users/UserScreen';
 import RackScreen from '../pages/master/rack/RackScreen';
 import BinScreen from '../pages/master/bin/BinScreen';
-
+import NumberingConfigPage from '../pages/master/numbering-config/NumberingConfigPage';
+import PlantMasterPage from '../pages/PlantMasterPage';
+import WorkCenterMasterPage from '../pages/WorkCenterMasterPage';
+import SparePartMasterPage from '../pages/SparePartMasterPage';
+import MeterMasterPage from '../pages/MeterMasterPage';
+import SamplingPlanPage from '../pages/SamplingPlanPage';
+import InspectionPlanPage from '../pages/InspectionPlanPage';
+import OeePage from '../pages/OeePage';
+import SupplierScorecardPage from '../pages/quality/SupplierScorecardPage';
+import CostRollupPage from '../pages/maintenance/CostRollupPage';
 
 
 export interface ScreenDefinition {
@@ -133,6 +149,10 @@ export interface ScreenDefinition {
 
 export const SCREEN_REGISTRY: Record<string, ScreenDefinition> = {
   dashboard: { component: DashboardPage },
+  'sales-dashboard': { component: SalesDashboard },
+  'purchase-dashboard': { component: PurchaseDashboard },
+  'planning-dashboard': { component: PlanningDashboard },
+  'production-dashboard': { component: ProductionDashboard },
   'inward-entry': { component: InwardEntryPage },
   'po-inward': { component: PoInwardPage },
   grn: { component: GrnPage },
@@ -181,6 +201,8 @@ export const SCREEN_REGISTRY: Record<string, ScreenDefinition> = {
   'customer-complaint': { component: ComplaintPage },
   capa: { component: CapaPage },
   'eight-d-report': { component: EightDPage },
+  traceability: { component: TraceabilityPage },
+  'quality-spc': { component: SpcPage },
   calibration: { component: CalibrationPage },
   'calibration-record': { component: CalibrationRecordPage },
   'purchase-request': { component: PurchaseRequestPage },
@@ -197,6 +219,7 @@ export const SCREEN_REGISTRY: Record<string, ScreenDefinition> = {
   'proforma-invoice': { component: ProformaInvoicePage },
   'sales-sales-dc': { component: SalesDcSalesPage },
   'sales-invoice': { component: SalesInvoicePage },
+  'sales-schedule': { component: SoSchedulePage },
   'sales-dc-return': { component: DcReturnSalesPage },
   'sales-invoice-return': { component: InvoiceReturnSalesPage },
   'production-bom': { component: BomPage },
@@ -255,6 +278,16 @@ export const SCREEN_REGISTRY: Record<string, ScreenDefinition> = {
   'customer-list': { component: CustomerListScreen },
   'supplier-list': { component: SupplierListScreen },
   'user-management': { component: UserScreen },
+  'numbering-config': { component: NumberingConfigPage },
+  'plant-master': { component: PlantMasterPage },
+  'work-center-master': { component: WorkCenterMasterPage },
+  'spare-part-master': { component: SparePartMasterPage },
+  'meter-master': { component: MeterMasterPage },
+  'sampling-plan': { component: SamplingPlanPage },
+  'inspection-plan': { component: InspectionPlanPage },
+  'oee': { component: OeePage },
+  'supplier-scorecard': { component: SupplierScorecardPage },
+  'machine-costs': { component: CostRollupPage },
 };
 
 

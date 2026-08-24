@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../../../contexts/AuthContext';
 import {
   useQualityDoc,
   useQualityDocAction,
@@ -15,7 +16,13 @@ import { useToast } from '../../../contexts/ToastContext';
 import { masterService } from '../../../services/masterService';
 import { lookupDocumentByNumber } from '../../../utils/documentLookup';
 import StatusBadge from '../../../components/common/StatusBadge';
+import WorkflowStatusStepper from '../../../components/common/WorkflowStatusStepper';
+import AttachmentsDrawer from '../../../components/common/AttachmentsDrawer';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
+import { auditEntityTypeFor } from '../../../utils/auditEntity';
+import { exportToCsv } from '../../../utils/csvExport';
+import { printDocLabel } from '../../../utils/barcode';
 
 const PAGE_SIZE = 8;
 
@@ -30,6 +37,7 @@ type ActionModal = { action: 'submit' | 'approve' | 'reject' | 'reopen' | 'cance
 
 export default function QualityDocScreen({ config, initialDocId, viewOnly = false, defaultType }: QualityDocScreenProps) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const { docType } = config;
 
   const [mode, setMode] = useState<'list' | 'form'>(initialDocId ? 'form' : 'list');
@@ -49,6 +57,8 @@ export default function QualityDocScreen({ config, initialDocId, viewOnly = fals
   const [lines, setLines] = useState<Array<Record<string, unknown>>>([]);
   const [initializedForId, setInitializedForId] = useState('');
   const [actionModal, setActionModal] = useState<ActionModal | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false);
 
   const listQuery = useQualityDocList(docType, {
     page,
@@ -95,6 +105,8 @@ export default function QualityDocScreen({ config, initialDocId, viewOnly = fals
   const doc = documentQuery.data;
   const genericStatus = String(doc?.status ?? 'DRAFT');
   const editable = !isViewOnly && (!documentId || ['DRAFT', 'REJECTED'].includes(genericStatus));
+  const allowedTransitions = (doc?._allowedTransitions as string[]) ?? [];
+  const isTerminal = Boolean(doc?._isTerminal);
 
   const isBusy = createMutation.isPending || updateMutation.isPending || actionMutation.isPending || deleteMutation.isPending;
 
@@ -340,6 +352,19 @@ export default function QualityDocScreen({ config, initialDocId, viewOnly = fals
             <span className="material-symbols-rounded">search</span>
             <input className="in" style={{ width: '250px' }} value={searchInput} placeholder="Search..." onChange={(e) => setSearchInput(e.target.value)} />
           </div>
+          <button
+            className="ibtn"
+            title="Export CSV"
+            onClick={() =>
+              exportToCsv(
+                rows as unknown as Record<string, unknown>[],
+                config.columns.map((c) => ({ key: c.field, label: c.label })),
+                config.docType
+              )
+            }
+          >
+            <span className="material-symbols-rounded">download</span>
+          </button>
           <span className="count">
             {formatNumber(totalElements)} record{totalElements === 1 ? '' : 's'}
           </span>
@@ -508,7 +533,36 @@ export default function QualityDocScreen({ config, initialDocId, viewOnly = fals
             <h2>
               <span className="material-symbols-rounded">description</span> Header
             </h2>
-            {documentId && <StatusBadge status={genericStatus} />}
+            {documentId && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" className="btn btn-sm" title="Print Label" onClick={() => {
+                  const docNo = String(form.docNo ?? form.documentNumber ?? documentId);
+                  printDocLabel(docNo, docType, String(form.title ?? form.itemCode ?? docNo));
+                }}>
+                  <span className="material-symbols-rounded">qr_code_2</span>
+                </button>
+                <button type="button" className="btn btn-sm" title="Attachments" onClick={() => setAttachmentsOpen(true)}>
+                  <span className="material-symbols-rounded">attach_file</span> Attach
+                </button>
+                <button type="button" className="btn btn-sm" title="Audit History" onClick={() => setAuditOpen(true)}>
+                  <span className="material-symbols-rounded">history</span> Audit
+                </button>
+                <WorkflowStatusStepper
+                  currentStatus={genericStatus}
+                  allowedTransitions={allowedTransitions}
+                  isTerminal={isTerminal}
+                  onAction={(act) => {
+                    if (act === 'submit' || act === 'approve' || act === 'reject' || act === 'cancel' || act === 'reopen') {
+                      if (act === 'submit' || act === 'approve' || act === 'reject' || act === 'cancel') {
+                        setActionModal({ action: act as ActionModal['action'], danger: act === 'reject' || act === 'cancel' });
+                      } else {
+                        runAction(act);
+                      }
+                    }
+                  }}
+                />
+              </div>
+            )}
           </div>
           <div className="fgrid">
             {config.fields.map((field) => (
@@ -704,7 +758,7 @@ export default function QualityDocScreen({ config, initialDocId, viewOnly = fals
               </button>
             )}
 
-            {documentId && !isViewOnly && genericStatus === 'SUBMITTED' && (
+            {documentId && !isViewOnly && genericStatus === 'SUBMITTED' && can('quality', 'Approve') && (
               <>
                 <button
                   type="button"
@@ -725,7 +779,7 @@ export default function QualityDocScreen({ config, initialDocId, viewOnly = fals
               </>
             )}
 
-            {documentId && !isViewOnly && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(genericStatus) && (
+            {documentId && !isViewOnly && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(genericStatus) && can('quality', 'Cancel') && (
               <button
                 type="button"
                 className="btn btn-d"
@@ -757,6 +811,12 @@ export default function QualityDocScreen({ config, initialDocId, viewOnly = fals
         onClose={() => setActionModal(null)}
         onConfirm={(note) => actionModal && runAction(actionModal.action, note)}
       />
+
+      <AuditHistoryDrawer open={auditOpen} entityType={auditEntityTypeFor(docType)} entityId={documentId ?? undefined} onClose={() => setAuditOpen(false)} />
+
+      {attachmentsOpen && documentId && (
+        <AttachmentsDrawer ownerType={docType} ownerId={Number(documentId)} onClose={() => setAttachmentsOpen(false)} />
+      )}
     </>
   );
 }

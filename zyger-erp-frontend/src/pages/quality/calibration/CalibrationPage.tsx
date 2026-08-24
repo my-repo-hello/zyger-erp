@@ -11,6 +11,7 @@ import { getApiErrorMessage } from '../../../utils/apiError';
 import { useToast } from '../../../contexts/ToastContext';
 import StatusBadge from '../../../components/common/StatusBadge';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import { exportToCsv } from '../../../utils/csvExport';
 
 const EMPTY_FORM = {
   id: '',
@@ -164,6 +165,37 @@ export default function CalibrationPage() {
             <span className="material-symbols-rounded">straighten</span>
             <span className="count">Instruments sorted by next due date</span>
           </div>
+          <button
+            className="ibtn"
+            title="Export CSV"
+            onClick={() =>
+              exportToCsv(
+                instruments as unknown as Record<string, unknown>[],
+                [
+                  { key: 'instrumentCode', label: 'Code' },
+                  { key: 'instrumentName', label: 'Name' },
+                  { key: 'instrumentType', label: 'Type' },
+                  { key: 'serialNumber', label: 'Serial' },
+                  { key: 'location', label: 'Location' },
+                  { key: 'calibrationFrequencyDays', label: 'Freq (days)' },
+                  {
+                    key: 'lastCalibrationDate',
+                    label: 'Last Calibrated',
+                    render: (value) => (value ? formatDate(String(value).slice(0, 10)) : ''),
+                  },
+                  {
+                    key: 'nextDueDate',
+                    label: 'Next Due',
+                    render: (value) => (value ? formatDate(String(value).slice(0, 10)) : ''),
+                  },
+                  { key: 'status', label: 'Status' },
+                ],
+                'calibration-instruments'
+              )
+            }
+          >
+            <span className="material-symbols-rounded">download</span>
+          </button>
           <div className="sp" />
           <select className="in" style={{ flex: '0 0 auto', width: '180px' }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             {STATUS_FILTERS.map((s) => (

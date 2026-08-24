@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 import { printDocument as printDoc } from '../../../utils/printDocument';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface ProductionReturn {
   id: number;
@@ -40,6 +42,16 @@ export default function ProductionReturnScreen() {
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'list' | 'form'>('list');
+  const [items, setItems] = useState<Array<{ code: string; name: string; uom?: string }>>([]);
+
+  const fetchItems = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get('/master/items', { params: { size: 500, active: true, sort: 'code,asc' } });
+      setItems((data?.content ?? data ?? []).filter((i: any) => i.active !== false));
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (tab === 'form') fetchItems(); }, [tab, fetchItems]);
 
   const load = async () => {
     setLoading(true);
@@ -96,7 +108,12 @@ export default function ProductionReturnScreen() {
             <label className="fld"><span>Return Date</span><input className="in" type="date" value={String(form.returnDate ?? '').slice(0, 10)} onChange={(e) => set('returnDate', e.target.value)} /></label>
             <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
             <label className="fld"><span>Job Card No</span><input className="in" value={String(form.jobCardNumber ?? '')} onChange={(e) => set('jobCardNumber', e.target.value)} /></label>
-            <label className="fld"><span>Item Code *</span><input className="in" value={String(form.itemCode ?? '')} onChange={(e) => set('itemCode', e.target.value)} /></label>
+            <label className="fld"><span>Item Code *</span>
+              <select className="in" value={String(form.itemCode ?? '')} onChange={(e) => { const item = items.find((i) => i.code === e.target.value); set('itemCode', e.target.value); if (item) { set('itemDescription', item.name); set('uom', item.uom || ''); } }}>
+                <option value="">Select item...</option>
+                {items.map((i) => <option key={i.code} value={i.code}>{i.code} - {i.name}</option>)}
+              </select>
+            </label>
             <label className="fld"><span>Item Description</span><input className="in" value={String(form.itemDescription ?? '')} onChange={(e) => set('itemDescription', e.target.value)} /></label>
             <label className="fld"><span>Batch No</span><input className="in" value={String(form.batchNumber ?? '')} onChange={(e) => set('batchNumber', e.target.value)} /></label>
             <label className="fld"><span>Quantity</span><input className="in" type="number" value={String(form.quantity ?? '')} onChange={(e) => set('quantity', Number(e.target.value))} /></label>
@@ -105,7 +122,7 @@ export default function ProductionReturnScreen() {
             <label className="fld"><span>Return Reason</span><input className="in" value={String(form.returnReason ?? '')} onChange={(e) => set('returnReason', e.target.value)} /></label>
             <label className="fld"><span>Condition</span>
               <select className="in" value={String(form.condition ?? 'GOOD')} onChange={(e) => set('condition', e.target.value)}>
-                <option value="GOOD">Good</option><option value="DAMAGED">Damaged</option><option value="REWORKABLE">Reworkable</option><option value="SCRAP">Scrap</option>
+                <option value="GOOD">Good</option><option value="REWORK">Rework</option><option value="SCRAP">Scrap</option>
               </select>
             </label>
             <label className="fld"><span>Warehouse</span><input className="in" value={String(form.warehouse ?? '')} onChange={(e) => set('warehouse', e.target.value)} /></label>
@@ -124,6 +141,14 @@ export default function ProductionReturnScreen() {
         <div className="panel">
           <div className="toolbar">
             <input className="in" placeholder="Search returns..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(filtered as unknown as Record<string, unknown>[], [
+              { key: 'returnNumber', label: 'Doc No' },
+              { key: 'returnDate', label: 'Date' },
+              { key: 'itemCode', label: 'Item' },
+              { key: 'quantity', label: 'Qty' },
+              { key: 'condition', label: 'Condition' },
+              { key: 'status', label: 'Status' },
+            ], 'production-returns')}><span className="material-symbols-rounded">download</span></button>
             <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Return</button>
           </div>
           <div className="twrap">
@@ -139,10 +164,11 @@ export default function ProductionReturnScreen() {
                       <td>{r.quantity} {r.uom}</td>
                       <td>{r.returnReason ?? '-'}</td>
                       <td>{r.condition ?? '-'}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>
                         {r.status === 'DRAFT' && <button className="ibtn" title="Verify" onClick={() => action(r.id, 'verify')}><span className="material-symbols-rounded">fact_check</span></button>}
                         {r.status === 'VERIFIED' && <button className="ibtn" title="Receive" onClick={() => action(r.id, 'receive')}><span className="material-symbols-rounded">inventory_2</span></button>}
+                        {r.status !== 'RECEIVED' && <button className="ibtn" title="Cancel" onClick={() => action(r.id, 'cancel')}><span className="material-symbols-rounded">block</span></button>}
                         <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
                         <button className="ibtn" title="Print" onClick={() => printDocument(r.id, 'print')}><span className="material-symbols-rounded">print</span></button>
                         <button className="ibtn" title="Download PDF" onClick={() => printDocument(r.id, 'download')}><span className="material-symbols-rounded">download</span></button>

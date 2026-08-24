@@ -3,6 +3,7 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface ToolService {
   id: number;
@@ -68,7 +69,7 @@ export default function ToolServiceRectificationScreen() {
     try {
       const { data } = await apiClient.get('/v1/maintenance/tool-services');
       setServices(Array.isArray(data) ? data : data.content ?? []);
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
   };
 
   useEffect(() => { load(); loadServices(); }, []);
@@ -176,8 +177,8 @@ export default function ToolServiceRectificationScreen() {
                       <td>{r.toolId}</td>
                       <td>{r.technicianCode}</td>
                       <td>{r.serviceCost ?? 0}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
-                      <td>{r.result ? <span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.result] ?? SC.PENDING).color, background: (SC[r.result] ?? SC.PENDING).bg }}>{r.result}</span> : '-'}</td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
+                      <td>{r.result ? <StatusBadge status={r.result} variant={SC} /> : '-'}</td>
                       <td>
                         <div style={{ position: 'relative' }}>
                           <button className="ibtn" title="Actions" onClick={() => setOpenActionMenu(openActionMenu === r.id ? null : r.id)}><span className="material-symbols-rounded">more_vert</span></button>

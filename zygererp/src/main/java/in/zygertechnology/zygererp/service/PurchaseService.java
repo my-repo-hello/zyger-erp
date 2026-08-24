@@ -77,6 +77,24 @@ public class PurchaseService {
         if ((supplierCode == null || supplierCode.isBlank()) && supplier != null && !supplier.isBlank()) {
             parties.findByName(supplier).ifPresent(p -> body.put("supplierCode", p.getCode()));
         }
+        if (supplierCode != null && !supplierCode.isBlank() && isPurchaseDoc(key)) {
+            parties.findByCode(supplierCode).ifPresent(p -> {
+                if ("BLOCKED".equals(p.getApprovalStatus())) {
+                    throw new IllegalStateException("Supplier " + p.getCode() + " is BLOCKED and cannot be used in purchase documents");
+                }
+                if (!"APPROVED".equals(p.getApprovalStatus()) && !"ACTIVE".equals(p.getApprovalStatus())) {
+                    Object override = body.get("supplierOverride");
+                    if (!Boolean.TRUE.equals(override)) {
+                        throw new IllegalStateException("Supplier " + p.getCode() + " approval status is " + p.getApprovalStatus() + ". Pass supplierOverride=true to bypass.");
+                    }
+                }
+            });
+        }
+    }
+
+    private boolean isPurchaseDoc(String key) {
+        return "purchase-order".equals(key) || "job-order".equals(key)
+            || "purchase-request".equals(key) || "po-inward".equals(key);
     }
 
     private void applyCreationDefaults(String key, DocEntity e) {
@@ -201,7 +219,9 @@ public class PurchaseService {
             PurchasePriceHistory h = new PurchasePriceHistory();
             h.setSupplier(sq.getSupplier());
             h.setItemCode(item.getItemCode());
-            h.setPreviousPrice(null);
+            BigDecimal prev = priceHistory.findTopBySupplierAndItemCodeOrderByEffectiveDateDescIdDesc(sq.getSupplier(), item.getItemCode())
+                .map(PurchasePriceHistory::getNewPrice).orElse(null);
+            h.setPreviousPrice(prev);
             h.setNewPrice(item.getUnitPrice());
             h.setEffectiveDate(sq.getDocDate());
             h.setChangedBy(sq.getCreatedBy());
@@ -215,7 +235,9 @@ public class PurchaseService {
         PurchasePriceHistory h = new PurchasePriceHistory();
         h.setSupplier(ppl.getSupplier());
         h.setItemCode(ppl.getItemCode());
-        h.setPreviousPrice(null);
+        BigDecimal prev = priceHistory.findTopBySupplierAndItemCodeOrderByEffectiveDateDescIdDesc(ppl.getSupplier(), ppl.getItemCode())
+            .map(PurchasePriceHistory::getNewPrice).orElse(null);
+        h.setPreviousPrice(prev);
         h.setNewPrice(ppl.getUnitPrice());
         h.setEffectiveDate(ppl.getEffectiveFrom());
         h.setChangedBy(user);
@@ -245,8 +267,8 @@ public class PurchaseService {
         d.put("pendingQuotations", countByStatus("supplier-quotation", "SUBMITTED"));
         d.put("openPO", countByStatus("purchase-order", "APPROVED"));
         d.put("pendingPOApproval", countByStatus("purchase-order", "SUBMITTED"));
-        d.put("partiallyReceived", 0L);
-        d.put("delayedPO", 0L);
+        d.put("partiallyReceived", computePartiallyReceivedPOs());
+        d.put("delayedPO", computeDelayedPOs());
         d.put("openJobOrders", countByStatus("job-order", "SUBMITTED"));
         d.put("overdueJobOrders", countByStatus("job-order", "APPROVED"));
         d.put("totalPR", docs.count("purchase-request"));
@@ -257,10 +279,63 @@ public class PurchaseService {
 
     private long countByStatus(String key, String status) {
         Map<String, Object> page = docs.list(key, Map.of("status", status, "size", "1", "page", "0"));
-        Object te = page.get("totalElements");
-        if (te instanceof Number n) return n.longValue();
-        Object content = page.getOrDefault("content", List.of());
-        if (content instanceof List<?> l) return l.size();
+        Object total = page.get("totalElements");
+        if (total instanceof Number n) return n.longValue();
         return 0;
+    }
+
+    private long computePartiallyReceivedPOs() {
+        List<DocEntity> postedPOs = docs.findAll("purchase-order").stream()
+            .filter(d -> "POSTED".equals(d.getStatus()))
+            .toList();
+        long count = 0;
+        for (DocEntity po : postedPOs) {
+            List<? extends LineEntity> poLines = po.getLines();
+            if (poLines == null || poLines.isEmpty()) continue;
+            boolean hasPartial = false;
+            for (LineEntity poLine : poLines) {
+                double poQty = poLine.getQty() != null ? poLine.getQty().doubleValue() : 0;
+                if (poQty <= 0) continue;
+                double received = 0;
+                try {
+                    var result = docs.findAll("po-inward").stream()
+                        .filter(d -> "POSTED".equals(d.getStatus()))
+                        .filter(d -> po.getDocNo().equals(headerStr(d, "purchaseOrderNo")))
+                        .flatMap(d -> d.getLines().stream())
+                        .filter(l -> poLine.getItemCode().equals(l.getItemCode()))
+                        .mapToDouble(l -> l.getQty() != null ? l.getQty().doubleValue() : 0)
+                        .sum();
+                    received = result;
+                } catch (Exception ignored) {}
+                if (received > 0 && received < poQty) {
+                    hasPartial = true;
+                    break;
+                }
+            }
+            if (hasPartial) count++;
+        }
+        return count;
+    }
+
+    private long computeDelayedPOs() {
+        LocalDate today = LocalDate.now();
+        return docs.findAll("purchase-order").stream()
+            .filter(d -> "POSTED".equals(d.getStatus()) || "APPROVED".equals(d.getStatus()))
+            .filter(d -> {
+                if (d instanceof PurchaseOrder po) {
+                    return po.getExpectedDeliveryDate() != null && po.getExpectedDeliveryDate().isBefore(today);
+                }
+                return false;
+            })
+            .count();
+    }
+
+    private String headerStr(DocEntity d, String field) {
+        try {
+            var f = d.getClass().getDeclaredField(field);
+            f.setAccessible(true);
+            Object v = f.get(d);
+            return v != null ? String.valueOf(v) : null;
+        } catch (Exception e) { return null; }
     }
 }

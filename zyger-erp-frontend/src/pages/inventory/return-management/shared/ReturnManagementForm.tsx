@@ -451,7 +451,7 @@ export default function ReturnManagementForm({
     }
 
     try {
-      let targetId = documentId ?? currentDocument?.id ?? null;
+      const targetId = documentId ?? currentDocument?.id ?? null;
 
       if (targetId && status === 'REJECTED') {
         await actionMutation.mutateAsync({
@@ -490,7 +490,7 @@ export default function ReturnManagementForm({
         activity: `${config.title} (${saved.docNo || 'Document'})`,
         refNo: saved.docNo || '',
         party: form.party || 'Party',
-        user: user?.username || 'Sanjai M',
+        user: user?.username || 'Unknown',
         status: saved.status || (submit ? 'SUBMITTED' : 'DRAFT'),
       });
 

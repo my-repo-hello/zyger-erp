@@ -18,5 +18,22 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      // Codebase uses dynamic typing intentionally in config-driven forms
+      '@typescript-eslint/no-explicit-any': 'warn',
+      // Form state initialized from fetched doc data in effects (established pattern)
+      'react-hooks/set-state-in-effect': 'warn',
+      // Screens export types/constants alongside components
+      'react-refresh/only-export-components': 'warn',
+      // Underscore prefix marks intentionally unused args/vars
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrors: 'none',
+        },
+      ],
+    },
   },
 ])

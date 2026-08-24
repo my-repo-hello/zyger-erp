@@ -23,9 +23,9 @@ import java.util.List;
 @DocKey("quality-test-certificate")
 public class QualityTestCertificate extends BaseDoc implements DocEntity {
 
-    /** INWARD | INTERNAL | OUTWARD */
-    @Column(name = "certificate_type", length = 30)
-    String certificateType;
+    /** INWARD | INTERNAL | OUTWARD (FRS §6.3) */
+    @Column(name = "certificate_type", length = 20)
+    String certificateType = "INTERNAL";
     @Column(name = "certificate_number", length = 60)
     String certificateNumber;
     @Column(name = "certificate_date")
@@ -57,6 +57,14 @@ public class QualityTestCertificate extends BaseDoc implements DocEntity {
 
     @Column(name = "inspection_id")
     Long inspectionId;
+
+    /** Outward certificate links (FRS §6.3): sales order / delivery challan / invoice references */
+    @Column(name = "sales_order_ref", length = 30)
+    String salesOrderRef;
+    @Column(name = "dc_ref", length = 30)
+    String dcRef;
+    @Column(name = "invoice_ref", length = 30)
+    String invoiceRef;
 
     @Column(length = 60)
     String itemCode;

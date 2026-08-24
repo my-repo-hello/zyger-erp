@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
+import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
 import { printDocument as printDoc } from '../../../utils/printDocument';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface JobCard {
   id: number;
@@ -69,15 +73,16 @@ const SC: Record<string, { color: string; bg: string }> = {
   QUALITY_HOLD: { color: '#7c3aed', bg: '#ede9fe' },
 };
 
-export default function JobCardScreen() {
+export default function JobCardScreen({ initialSearch }: { initialSearch?: string }) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [rows, setRows] = useState<JobCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<Record<string, unknown>>({});
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<JobCard | null>(null);
   const [busy, setBusy] = useState(false);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(initialSearch ?? '');
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [subjobs, setSubjobs] = useState<Subjob[]>([]);
   const [loadingSubs, setLoadingSubs] = useState(false);
@@ -91,6 +96,25 @@ export default function JobCardScreen() {
   const [actionNote, setActionNote] = useState('');
   const [actionTarget, setActionTarget] = useState<{ id: number; action: string } | null>(null);
   const [openActionMenu, setOpenActionMenu] = useState<number | null>(null);
+  const [machines, setMachines] = useState<Array<{ code: string; name: string }>>([]);
+  const [users, setUsers] = useState<Array<{ username: string; fullName: string }>>([]);
+  const [workCenters, setWorkCenters] = useState<Array<{ code: string; name: string }>>([]);
+  const [auditOpen, setAuditOpen] = useState(false);
+
+  const fetchMasters = useCallback(async () => {
+    try {
+      const [mRes, uRes, wRes] = await Promise.allSettled([
+        apiClient.get('/master/machines', { params: { size: 200 } }),
+        apiClient.get('/master/users', { params: { size: 200 } }),
+        apiClient.get('/master/work-centers', { params: { size: 100 } }),
+      ]);
+      if (mRes.status === 'fulfilled') setMachines((mRes.value.data?.content ?? mRes.value.data ?? []).filter((m: any) => m.active !== false));
+      if (uRes.status === 'fulfilled') setUsers((uRes.value.data?.content ?? uRes.value.data ?? []).filter((u: any) => u.active !== false));
+      if (wRes.status === 'fulfilled') setWorkCenters(wRes.value.data?.content ?? wRes.value.data ?? []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (expandedId) fetchMasters(); }, [expandedId, fetchMasters]);
 
   const load = async () => {
     setLoading(true);
@@ -257,7 +281,14 @@ export default function JobCardScreen() {
       {/* ========= MANUAL FORM ========= */}
       {tab === 'form' && (
         <div className="panel">
-          <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Job Card</h2></div>
+          <div className="panel-h">
+            <h2>{editId ? 'Edit' : 'New'} Job Card</h2>
+            {editId && (
+              <button type="button" className="btn btn-sm" title="Audit History" onClick={() => setAuditOpen(true)}>
+                <span className="material-symbols-rounded">history</span> Audit
+              </button>
+            )}
+          </div>
           <div className="fgrid">
             <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
             <label className="fld"><span>Part Code *</span><input className="in" value={String(form.partCode ?? '')} onChange={(e) => set('partCode', e.target.value)} /></label>
@@ -290,6 +321,16 @@ export default function JobCardScreen() {
           <div className="toolbar">
             <input className="in" placeholder="Search job cards..." value={search} onChange={(e) => setSearch(e.target.value)} />
             <div style={{ display: 'flex', gap: 8 }}>
+              <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(filtered as unknown as Record<string, unknown>[], [
+                { key: 'jobCardNumber', label: 'JC No' },
+                { key: 'workOrderNumber', label: 'WO No' },
+                { key: 'partCode', label: 'Part' },
+                { key: 'plannedQuantity', label: 'Planned' },
+                { key: 'completedQuantity', label: 'Completed' },
+                { key: 'reworkQuantity', label: 'Rework' },
+                { key: 'scrapQuantity', label: 'Scrap' },
+                { key: 'status', label: 'Status' },
+              ], 'job-cards')}><span className="material-symbols-rounded">download</span></button>
               <button className="btn btn-p" onClick={() => setTab('from-wo')}>
                 <span className="material-symbols-rounded" style={{ fontSize: 18 }}>add_task</span> Create from WO
               </button>
@@ -331,14 +372,14 @@ export default function JobCardScreen() {
                         <td style={{ color: r.reworkQuantity > 0 ? '#f59e0b' : undefined }}>{r.reworkQuantity}</td>
                         <td style={{ color: r.scrapQuantity > 0 ? '#ef4444' : undefined }}>{r.scrapQuantity}</td>
                         <td>{r.priority ?? '-'}</td>
-                        <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                        <td><StatusBadge status={r.status} variant={SC} /></td>
                         <td style={{ position: 'relative' }}>
                           <button className="ibtn" title="Actions" onClick={(e) => { e.stopPropagation(); setOpenActionMenu(openActionMenu === r.id ? null : r.id); }}>
                             <span className="material-symbols-rounded">more_vert</span>
                           </button>
                           {openActionMenu === r.id && (
                             <div style={{ position: 'absolute', right: 0, top: '100%', zIndex: 20, background: 'var(--card-bg, #fff)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', minWidth: 180, padding: '4px 0' }} onClick={(e) => e.stopPropagation()}>
-                              {r.status === 'DRAFT' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'release'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>play_arrow</span> Release Job</button>}
+                              {r.status === 'DRAFT' && can('production', 'Approve') && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'release'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>play_arrow</span> Release Job</button>}
                               {r.status === 'RELEASED' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); action(r.id, 'start'); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#f59e0b' }}>play_circle</span> Start Production</button>}
                               {(r.status === 'RELEASED' || r.status === 'IN_PROGRESS') && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); setActionTarget({ id: r.id, action: 'hold' }); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#ef4444' }}>pause</span> Hold</button>}
                               {r.status === 'IN_PROGRESS' && <button style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, textAlign: 'left' }} onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--blue-bg)')} onMouseLeave={(e) => (e.currentTarget.style.background = 'none')} onClick={() => { setOpenActionMenu(null); loadCompCheck(r.id); }}><span className="material-symbols-rounded" style={{ fontSize: 18, color: '#22c55e' }}>check_circle</span> Complete</button>}
@@ -380,9 +421,9 @@ export default function JobCardScreen() {
                                         <td style={{ color: s.reworkQuantity > 0 ? '#f59e0b' : undefined }}>{s.reworkQuantity}</td>
                                         <td style={{ color: s.rejectedQuantity > 0 ? '#ef4444' : undefined }}>{s.rejectedQuantity}</td>
                                         <td style={{ color: s.scrapQuantity > 0 ? '#ef4444' : undefined }}>{s.scrapQuantity}</td>
-                                        <td><span style={{ padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, color: (SC[s.status] ?? SC.PENDING).color, background: (SC[s.status] ?? SC.PENDING).bg }}>{s.status?.replace('_', ' ')}</span></td>
+                                        <td><StatusBadge status={s.status} variant={SC} /></td>
                                         <td>
-                                          {s.status === 'PENDING' && <button className="ibtn" title="Release" onClick={() => subAction(s.id, 'release')}><span className="material-symbols-rounded">play_arrow</span></button>}
+                                          {s.status === 'PENDING' && can('production', 'Approve') && <button className="ibtn" title="Release" onClick={() => subAction(s.id, 'release')}><span className="material-symbols-rounded">play_arrow</span></button>}
                                           {s.status === 'RELEASED' && <button className="ibtn" title="Start" onClick={() => subAction(s.id, 'start')}><span className="material-symbols-rounded">play_circle</span></button>}
                                           {s.status === 'IN_PROGRESS' && <>
                                             <button className="ibtn" title="Quality Hold" onClick={() => subAction(s.id, 'quality-hold')}><span className="material-symbols-rounded">pause_circle</span></button>
@@ -418,9 +459,25 @@ export default function JobCardScreen() {
             <label className="fld"><span>Sequence No</span><input className="in" type="number" value={String(subForm.sequenceNo ?? '')} onChange={(e) => setSub('sequenceNo', Number(e.target.value))} /></label>
             <label className="fld"><span>Operation Code *</span><input className="in" value={String(subForm.operationCode ?? '')} onChange={(e) => setSub('operationCode', e.target.value)} /></label>
             <label className="fld"><span>Description</span><input className="in" value={String(subForm.operationDescription ?? '')} onChange={(e) => setSub('operationDescription', e.target.value)} /></label>
-            <label className="fld"><span>Machine Code</span><input className="in" value={String(subForm.machineCode ?? '')} onChange={(e) => setSub('machineCode', e.target.value)} /></label>
-            <label className="fld"><span>Work Center</span><input className="in" value={String(subForm.workCenterCode ?? '')} onChange={(e) => setSub('workCenterCode', e.target.value)} /></label>
-            <label className="fld"><span>Operator</span><input className="in" value={String(subForm.operatorCode ?? '')} onChange={(e) => setSub('operatorCode', e.target.value)} /></label>
+            <label className="fld"><span>Machine Code</span>
+              <select className="in" value={String(subForm.machineCode ?? '')} onChange={(e) => setSub('machineCode', e.target.value)}>
+                <option value="">Select machine...</option>
+                {machines.map((m) => <option key={m.code} value={m.code}>{m.code} - {m.name}</option>)}
+                {subForm.machineCode && !machines.some((m) => m.code === subForm.machineCode) && <option value={String(subForm.machineCode)}>{String(subForm.machineCode)}</option>}
+              </select>
+            </label>
+            <label className="fld"><span>Work Center</span>
+              <select className="in" value={String(subForm.workCenterCode ?? '')} onChange={(e) => setSub('workCenterCode', e.target.value)}>
+                <option value="">Select work center...</option>
+                {workCenters.map((w) => <option key={w.code} value={w.code}>{w.code} - {w.name}</option>)}
+              </select>
+            </label>
+            <label className="fld"><span>Operator</span>
+              <select className="in" value={String(subForm.operatorCode ?? '')} onChange={(e) => setSub('operatorCode', e.target.value)}>
+                <option value="">Select operator...</option>
+                {users.map((u) => <option key={u.username} value={u.username}>{u.username} - {u.fullName || u.username}</option>)}
+              </select>
+            </label>
             <label className="fld"><span>Planned Qty</span><input className="in" type="number" value={String(subForm.plannedQuantity ?? '')} onChange={(e) => setSub('plannedQuantity', Number(e.target.value))} /></label>
             <label className="fld"><span>Completed Qty</span><input className="in" type="number" value={String(subForm.completedQuantity ?? '')} onChange={(e) => setSub('completedQuantity', Number(e.target.value))} /></label>
             <label className="fld"><span>Rework Qty</span><input className="in" type="number" value={String(subForm.reworkQuantity ?? '')} onChange={(e) => setSub('reworkQuantity', Number(e.target.value))} /></label>
@@ -490,6 +547,7 @@ export default function JobCardScreen() {
 
       <ConfirmActionModal open={Boolean(deleteTarget)} title={`Delete ${deleteTarget?.jobCardNumber ?? ''}`} body="Permanently delete this job card?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteTarget(null)} onConfirm={del} />
       <ConfirmActionModal open={Boolean(deleteSubTarget)} title="Delete Subjob" body="Permanently delete this subjob?" okLabel="Delete" danger busy={busy} onClose={() => setDeleteSubTarget(null)} onConfirm={delSub} />
+      <AuditHistoryDrawer open={auditOpen} entityType="JobCard" entityId={editId ?? undefined} onClose={() => setAuditOpen(false)} />
     </>
   );
 }

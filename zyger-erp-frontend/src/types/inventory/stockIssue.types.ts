@@ -33,6 +33,7 @@ export interface StockIssueTypeConfig {
   subtitle: string;
   apiPath: string;
   transactionType: string;
+  docLabel?: string;
   headerFields: StockIssueHeaderFieldConfig[];
 }
 

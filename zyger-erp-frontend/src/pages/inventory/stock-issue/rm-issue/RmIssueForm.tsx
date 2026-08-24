@@ -384,7 +384,7 @@ export default function RmIssueForm({
     }
 
     try {
-      let targetId = documentId ?? currentDocument?.id ?? null;
+      const targetId = documentId ?? currentDocument?.id ?? null;
 
       if (targetId && status === 'REJECTED') {
         await actionMutation.mutateAsync({

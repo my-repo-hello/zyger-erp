@@ -5,6 +5,7 @@ import in.zygertechnology.zygererp.entity.QualityNcr;
 import in.zygertechnology.zygererp.service.DocumentFacade;
 import in.zygertechnology.zygererp.service.QualityInspectionService;
 import in.zygertechnology.zygererp.service.ExportService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,6 +20,7 @@ import java.util.*;
  */
 @RestController
 @RequestMapping("/api/v1/quality")
+@RequirePermission(module = "QUALITY", screen = "*", action = "VIEW")
 @RequiredArgsConstructor
 public class QualityController {
 
@@ -66,7 +68,15 @@ public class QualityController {
     }
 
     @GetMapping("/inspections/next-number")
-    public Map<String, Object> nextNumber() {
+    public Map<String, Object> nextNumber(@org.springframework.web.bind.annotation.RequestParam(required = false) String inspectionType) {
+        if (inspectionType != null && !inspectionType.isBlank()) {
+            try {
+                in.zygertechnology.zygererp.entity.QualityInspectionType type =
+                    in.zygertechnology.zygererp.entity.QualityInspectionType.valueOf(inspectionType.toUpperCase());
+                String prefix = QualityInspectionService.prefixForType(type);
+                return Map.of("nextNumber", docs.nextNumber(QualityInspectionService.KEY, prefix));
+            } catch (Exception ignored) {}
+        }
         return Map.of("nextNumber", docs.nextNumber(QualityInspectionService.KEY));
     }
 
@@ -80,8 +90,11 @@ public class QualityController {
     @PostMapping("/inspections/{id}/save-measurements")
     public Map<String, Object> saveMeasurements(@PathVariable Long id,
                                                 @RequestBody List<Map<String, Object>> body,
+                                                @RequestParam(required = false) String overrideReason,
                                                 Principal p) {
-        return docs.toRow(quality.saveMeasurements(id, body, principalName(p)));
+        String user = principalName(p);
+        return docs.toRow(quality.saveMeasurements(id, body, user,
+                overrideReason != null ? overrideReason : null, overrideReason != null ? user : null));
     }
 
     @PostMapping("/inspections/{id}/submit")
@@ -150,8 +163,21 @@ public class QualityController {
 
     @PostMapping("/inspections/{id}/characteristics/bulk-save")
     public Map<String, Object> bulkSave(@PathVariable Long id,
-                                        @RequestBody List<Map<String, Object>> body, Principal p) {
-        return docs.toRow(quality.saveMeasurements(id, body, principalName(p)));
+                                        @RequestBody List<Map<String, Object>> body,
+                                        @RequestParam(required = false) String overrideReason,
+                                        Principal p) {
+        String user = principalName(p);
+        return docs.toRow(quality.saveMeasurements(id, body, user,
+                overrideReason != null ? overrideReason : null, overrideReason != null ? user : null));
+    }
+
+    /** §6.2: Bulk import measurements from CSV. Format: balloonNo|characteristicCode,actualValue,instrumentCode,remark */
+    @PostMapping("/inspections/{id}/characteristics/bulk-import")
+    public Map<String, Object> bulkImport(@PathVariable Long id,
+                                          @RequestBody String csvContent, Principal p) {
+        Map<String, Object> result = quality.bulkImportMeasurements(id, csvContent, principalName(p));
+        result.put("inspection", docs.toRow(quality.get(id)));
+        return result;
     }
 
     private Map<String, Object> saveMeasurementsPut(Long id, List<Map<String, Object>> body) {

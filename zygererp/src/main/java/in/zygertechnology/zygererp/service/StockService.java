@@ -2,29 +2,39 @@ package in.zygertechnology.zygererp.service;
 
 import in.zygertechnology.zygererp.entity.DocEntity;
 import in.zygertechnology.zygererp.entity.LineEntity;
+import in.zygertechnology.zygererp.entity.StockBalance;
 import in.zygertechnology.zygererp.entity.StockLedger;
 import in.zygertechnology.zygererp.repo.LedgerRepository;
+import in.zygertechnology.zygererp.repo.StockBalanceRepository;
+import in.zygertechnology.zygererp.security.CurrentUserRoles;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.util.*;
 
 @Service
 @Transactional
 public class StockService {
 
+    private static final Logger log = LoggerFactory.getLogger(StockService.class);
     private final LedgerRepository ledger;
+    private final StockBalanceRepository balances;
     private final DocumentFacade docs;
 
-    public StockService(LedgerRepository ledger, DocumentFacade docs) {
+    public StockService(LedgerRepository ledger, StockBalanceRepository balances, DocumentFacade docs) {
         this.ledger = ledger;
+        this.balances = balances;
         this.docs = docs;
     }
 
     public record Balance(String item, String loc, String batch, String heat,
-                          double onHand, double reserved) {
-        public double available() { return onHand - reserved; }
+                          double onHand, double reserved, double qcHold) {
+        public double available() { return onHand - reserved - qcHold; }
     }
 
     public static String key(String i, String l, String b, String h) {
@@ -36,33 +46,48 @@ public class StockService {
     public static String str(Object o) { return o == null ? "" : String.valueOf(o); }
 
     public Map<String, Balance> balances() {
-        Map<String, double[]> acc = new LinkedHashMap<>();
+        List<StockBalance> rows = balances.findAll();
+        Map<String, double[]> free = new LinkedHashMap<>();
+        Map<String, double[]> qcHold = new LinkedHashMap<>();
         Map<String, String[]> meta = new LinkedHashMap<>();
-        for (StockLedger e : ledger.findAllByOrderByTxDateAsc()) {
-            String k = key(e.getItemCode(), e.getLocation(), e.getBatchNo(), e.getHeatNo());
-            double[] a = acc.computeIfAbsent(k, x -> new double[2]);
-            a[0] += bd(e.getInQty());
-            a[1] += bd(e.getOutQty());
-            meta.put(k, new String[]{e.getItemCode(), e.getLocation(), e.getBatchNo(), e.getHeatNo()});
+
+        for (StockBalance sb : rows) {
+            String k = key(sb.getItemCode(), sb.getLocation(), sb.getBatchNo(), sb.getHeatNo());
+            meta.put(k, new String[]{sb.getItemCode(), sb.getLocation(), sb.getBatchNo(), sb.getHeatNo()});
+
+            if ("QC_HOLD".equals(sb.getStockStatus())) {
+                qcHold.computeIfAbsent(k, x -> new double[1])[0] += bd(sb.getQty());
+            } else if ("FREE".equals(sb.getStockStatus())) {
+                free.computeIfAbsent(k, x -> new double[1])[0] += bd(sb.getQty());
+            }
+            // BLOCKED stock is not counted in onHand or available
         }
+
         Map<String, Balance> m = new LinkedHashMap<>();
-        acc.forEach((k, a) -> {
+        Set<String> allKeys = new LinkedHashSet<>();
+        allKeys.addAll(free.keySet());
+        allKeys.addAll(qcHold.keySet());
+
+        for (String k : allKeys) {
             String[] s = meta.get(k);
-            m.put(k, new Balance(s[0], s[1], s[2], s[3], a[0] - a[1], 0));
-        });
+            double freeQty = free.containsKey(k) ? free.get(k)[0] : 0;
+            double holdQty = qcHold.containsKey(k) ? qcHold.get(k)[0] : 0;
+            double totalPhysical = freeQty + holdQty;
+            m.put(k, new Balance(s[0], s[1], s[2], s[3], totalPhysical, 0, holdQty));
+        }
 
         reservations().forEach((k, q) -> {
             Balance b = m.get(k);
-            if (b != null) m.put(k, new Balance(b.item(), b.loc(), b.batch(), b.heat(), b.onHand(), q));
-            else {
+            if (b != null) {
+                m.put(k, new Balance(b.item(), b.loc(), b.batch(), b.heat(), b.onHand(), q, b.qcHold()));
+            } else {
                 String[] s = k.split("\\|", -1);
-                m.put(k, new Balance(s[0], s[1], s[2], s[3], 0, q));
+                m.put(k, new Balance(s[0], s[1], s[2], s[3], 0, q, 0));
             }
         });
         return m;
     }
 
-    /** Reserved quantities: APPROVED stock-allotment lines minus POSTED stock-release lines. */
     private Map<String, Double> reservations() {
         Map<String, Double> r = new LinkedHashMap<>();
         for (DocEntity a : docs.findAll("stock-allotment")) {
@@ -107,55 +132,156 @@ public class StockService {
                 .mapToDouble(Balance::onHand).sum();
     }
 
-    public StockLedger recordStockIn(String docNo, String docType, String txType, String itemCode,
-                                    String location, String batchNo, String heatNo,
-                                    BigDecimal inQty, java.time.LocalDate txDate, String user) {
-        StockLedger entry = StockLedger.builder()
-                .docNo(docNo)
-                .docType(docType)
-                .txType(txType)
-                .itemCode(itemCode)
-                .location(location != null ? location : "MAIN")
-                .batchNo(batchNo != null ? batchNo : "")
-                .heatNo(heatNo != null ? heatNo : "")
-                .inQty(inQty != null ? inQty : BigDecimal.ZERO)
-                .outQty(BigDecimal.ZERO)
-                .txDate(txDate != null ? txDate : java.time.LocalDate.now())
-                .createdBy(user)
-                .createdAt(java.time.Instant.now())
-                .build();
-        return ledger.save(entry);
+    public double qcHold(String item, String loc) {
+        return balances().values().stream()
+                .filter(b -> b.item().equals(item)
+                        && (loc == null || loc.isEmpty() || b.loc().equals(loc)))
+                .mapToDouble(Balance::qcHold).sum();
     }
 
-    public StockLedger recordStockOut(String docNo, String docType, String txType, String itemCode,
-                                     String location, String batchNo, String heatNo,
-                                     BigDecimal outQty, java.time.LocalDate txDate, String user) {
-        verifyStockAvailability(itemCode, location, outQty);
+    public void recordStockIn(String docNo, String docType, String txType, String itemCode,
+                              String location, String batchNo, String heatNo,
+                              BigDecimal inQty, LocalDate txDate, String user,
+                              String stockStatus) {
+        if (stockStatus == null || stockStatus.isBlank()) stockStatus = "FREE";
+        String loc = location != null ? location : "MAIN";
+        String batch = batchNo != null ? batchNo : "";
+        String heat = heatNo != null ? heatNo : "";
+        BigDecimal qty = inQty != null ? inQty : BigDecimal.ZERO;
+
+        if (ledger.existsByDocNoAndDocType(docNo, docType)) {
+            log.warn("Duplicate stock-in blocked: docNo={}, docType={}", docNo, docType);
+            return;
+        }
+
         StockLedger entry = StockLedger.builder()
-                .docNo(docNo)
-                .docType(docType)
-                .txType(txType)
-                .itemCode(itemCode)
-                .location(location != null ? location : "MAIN")
-                .batchNo(batchNo != null ? batchNo : "")
-                .heatNo(heatNo != null ? heatNo : "")
-                .inQty(BigDecimal.ZERO)
-                .outQty(outQty != null ? outQty : BigDecimal.ZERO)
-                .txDate(txDate != null ? txDate : java.time.LocalDate.now())
-                .createdBy(user)
-                .createdAt(java.time.Instant.now())
+                .docNo(docNo).docType(docType).txType(txType)
+                .itemCode(itemCode).location(loc).batchNo(batch).heatNo(heat)
+                .stockStatus(stockStatus)
+                .inQty(qty).outQty(BigDecimal.ZERO)
+                .txDate(txDate != null ? txDate : LocalDate.now())
+                .createdBy(user).createdAt(Instant.now())
                 .build();
-        return ledger.save(entry);
+        ledger.save(entry);
+        updateBalance(itemCode, loc, batch, heat, stockStatus, qty, BigDecimal.ZERO);
+    }
+
+    public void recordStockOut(String docNo, String docType, String txType, String itemCode,
+                               String location, String batchNo, String heatNo,
+                               BigDecimal outQty, LocalDate txDate, String user) {
+        recordStockOut(docNo, docType, txType, itemCode, location, batchNo, heatNo,
+                outQty, txDate, user, false);
+    }
+
+    public void recordStockOut(String docNo, String docType, String txType, String itemCode,
+                               String location, String batchNo, String heatNo,
+                               BigDecimal outQty, LocalDate txDate, String user,
+                               boolean allowNegativeOverride) {
+        String loc = location != null ? location : "MAIN";
+        String batch = batchNo != null ? batchNo : "";
+        String heat = heatNo != null ? heatNo : "";
+        BigDecimal qty = outQty != null ? outQty : BigDecimal.ZERO;
+        if (qty.compareTo(BigDecimal.ZERO) <= 0) return;
+
+        if (ledger.existsByDocNoAndDocType(docNo, docType)) {
+            log.warn("Duplicate stock-out blocked: docNo={}, docType={}", docNo, docType);
+            return;
+        }
+
+        verifyStockAvailability(itemCode, loc, qty, allowNegativeOverride);
+
+        StockLedger entry = StockLedger.builder()
+                .docNo(docNo).docType(docType).txType(txType)
+                .itemCode(itemCode).location(loc).batchNo(batch).heatNo(heat)
+                .stockStatus("FREE")
+                .inQty(BigDecimal.ZERO).outQty(qty)
+                .txDate(txDate != null ? txDate : LocalDate.now())
+                .createdBy(user).createdAt(Instant.now())
+                .build();
+        ledger.save(entry);
+        updateBalance(itemCode, loc, batch, heat, "FREE", BigDecimal.ZERO, qty);
+    }
+
+    public void recordStockAdjustment(String docNo, String docType, String txType, String itemCode,
+                                      String location, String batchNo, String heatNo,
+                                      BigDecimal deltaQty, LocalDate txDate, String user) {
+        recordStockAdjustment(docNo, docType, txType, itemCode, location, batchNo, heatNo,
+                deltaQty, txDate, user, false);
+    }
+
+    public void recordStockAdjustment(String docNo, String docType, String txType, String itemCode,
+                                      String location, String batchNo, String heatNo,
+                                      BigDecimal deltaQty, LocalDate txDate, String user,
+                                      boolean allowNegativeOverride) {
+        String loc = location != null ? location : "MAIN";
+        String batch = batchNo != null ? batchNo : "";
+        String heat = heatNo != null ? heatNo : "";
+        if (deltaQty.compareTo(BigDecimal.ZERO) == 0) return;
+
+        if (deltaQty.compareTo(BigDecimal.ZERO) < 0) {
+            verifyStockAvailability(itemCode, loc, deltaQty.negate(), allowNegativeOverride);
+        }
+
+        StockLedger entry = StockLedger.builder()
+                .docNo(docNo).docType(docType).txType(txType)
+                .itemCode(itemCode).location(loc).batchNo(batch).heatNo(heat)
+                .stockStatus("FREE")
+                .inQty(deltaQty.compareTo(BigDecimal.ZERO) > 0 ? deltaQty : BigDecimal.ZERO)
+                .outQty(deltaQty.compareTo(BigDecimal.ZERO) < 0 ? deltaQty.negate() : BigDecimal.ZERO)
+                .txDate(txDate != null ? txDate : LocalDate.now())
+                .createdBy(user).createdAt(Instant.now())
+                .build();
+        ledger.save(entry);
+        if (deltaQty.compareTo(BigDecimal.ZERO) > 0) {
+            updateBalance(itemCode, loc, batch, heat, "FREE", deltaQty, BigDecimal.ZERO);
+        } else {
+            updateBalance(itemCode, loc, batch, heat, "FREE", BigDecimal.ZERO, deltaQty.negate());
+        }
+    }
+
+    private void updateBalance(String itemCode, String location, String batchNo, String heatNo,
+                               String stockStatus, BigDecimal addQty, BigDecimal subtractQty) {
+        Optional<StockBalance> existing = balances
+                .findByItemCodeAndLocationAndBatchNoAndHeatNoAndStockStatus(
+                        itemCode, location, batchNo, heatNo, stockStatus);
+
+        if (existing.isPresent()) {
+            StockBalance sb = existing.get();
+            sb.setQty(sb.getQty().add(addQty).subtract(subtractQty));
+            if (sb.getQty().compareTo(BigDecimal.ZERO) <= 0 && "FREE".equals(stockStatus)) {
+                balances.delete(sb);
+            } else {
+                balances.save(sb);
+            }
+        } else if (addQty.compareTo(BigDecimal.ZERO) > 0) {
+            balances.save(StockBalance.builder()
+                    .itemCode(itemCode).location(location).batchNo(batchNo).heatNo(heatNo)
+                    .stockStatus(stockStatus).qty(addQty)
+                    .build());
+        }
     }
 
     public void verifyStockAvailability(String itemCode, String location, BigDecimal requiredQty) {
+        verifyStockAvailability(itemCode, location, requiredQty, false);
+    }
+
+    public void verifyStockAvailability(String itemCode, String location, BigDecimal requiredQty,
+                                        boolean allowNegativeOverride) {
         if (requiredQty == null || requiredQty.compareTo(BigDecimal.ZERO) <= 0) return;
-        double avail = available(itemCode, location);
-        if (avail < requiredQty.doubleValue()) {
-            throw new IllegalArgumentException("Insufficient available stock for item '" + itemCode +
-                    "' at location '" + (location == null ? "MAIN" : location) + "'. Requested: " +
-                    requiredQty + ", Available: " + avail);
+        String loc = location == null || location.isEmpty() ? "MAIN" : location;
+        double avail = available(itemCode, loc);
+        if (avail - requiredQty.doubleValue() < 0) {
+            if (allowNegativeOverride
+                    && CurrentUserRoles.hasAnyRole("ADMIN", "STORE_MANAGER", "STORES_MANAGER")) {
+                log.warn("NEGATIVE STOCK OVERRIDE: item={}, location={}, requested={}, available={} — authorized by {}",
+                        itemCode, loc, requiredQty, avail, CurrentUserRoles.username());
+                return;
+            }
+            log.warn("NEGATIVE STOCK ATTEMPT BLOCKED: item={}, location={}, requested={}, available={}, deficit={}",
+                    itemCode, loc, requiredQty, avail,
+                    BigDecimal.valueOf(requiredQty.doubleValue() - avail));
+            throw new IllegalArgumentException("Insufficient stock for " + itemCode +
+                    " at " + loc + ": available " + avail + ", requested " + requiredQty);
         }
     }
 }
-

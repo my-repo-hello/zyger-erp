@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../../../contexts/AuthContext';
 import axiosClient from '../../../api/axiosClient';
 import StatusBadge from '../../../components/common/StatusBadge';
 import { useTabs } from '../../../contexts/TabsContext';
 import { useToast } from '../../../contexts/ToastContext';
 import JobOrderPage from '../job-order/JobOrderPage';
 import { logSystemActivity } from '../../../utils/activityLog';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface JoScheduleRow {
   id?: number;
@@ -32,6 +34,7 @@ interface JoScheduleRow {
 export default function JoSchedulePage() {
   const { openTab } = useTabs();
   const { toast } = useToast();
+  const { user } = useAuth();
 
   const [schedules, setSchedules] = useState<JoScheduleRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,24 +57,25 @@ export default function JoSchedulePage() {
   } | null>(null);
 
   // Detailed Form State for New JO Schedule
-  const [newSchedule, setNewSchedule] = useState({
+  const [newSchedule, setNewSchedule] = useState(() => ({
     refDocNo: '',
     joNo: '',
-    subcontractor: 'Precision Heat Treaters',
-    subcontractorCode: 'SUB-001',
-    process: 'Heat Treatment',
-    itemCode: 'ITEM-001',
-    itemDescription: 'Precision CNC Shaft 25mm',
-    uom: 'PCS',
-    unitPrice: 120,
-    scheduledQty: 100,
-    totalAmount: 12000,
+    subcontractor: '',
+    subcontractorCode: '',
+    process: '',
+    itemCode: '',
+    itemDescription: '',
+    uom: '',
+    unitPrice: 0,
+    scheduledQty: 0,
+    totalAmount: 0,
     issueDate: new Date().toISOString().split('T')[0],
     expectedReturnDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    location: 'SUBCON-01 - Heat Treatment Bay',
+    location: '',
     priority: 'NORMAL',
     remarks: '',
-  });
+    contactPerson: '',
+  }));
 
   useEffect(() => {
     // Fetch JO Schedules from API
@@ -88,22 +92,22 @@ export default function JoSchedulePage() {
                 const price = Number(s.unitPrice || s.rate || 120);
                 list.push({
                   id: s.id,
-                  joNo: jo.docNo || 'JO-2026-0001',
-                  refDocNo: s.refDocNo || jo.docNo,
-                  subcontractor: jo.supplierJobWorker || jo.supplier || 'Precision Heat Treaters',
-                  subcontractorCode: jo.supplierCode || 'SUB-001',
-                  process: s.process || jo.process || 'Heat Treatment',
-                  itemCode: s.itemCode || 'ITEM-001',
-                  itemDescription: s.itemDescription || 'Precision CNC Shaft 25mm',
-                  uom: s.uom || 'PCS',
+                  joNo: jo.docNo || '',
+                  refDocNo: s.refDocNo || jo.docNo || '',
+                  subcontractor: jo.supplierJobWorker || jo.supplier || '',
+                  subcontractorCode: jo.supplierCode || '',
+                  process: s.process || jo.process || '',
+                  itemCode: s.itemCode || '',
+                  itemDescription: s.itemDescription || '',
+                  uom: s.uom || '',
                   unitPrice: price,
                   totalAmount: qty * price,
                   scheduledQty: qty,
-                  issueDate: s.issueDate || jo.date || '2026-02-15',
-                  expectedReturnDate: s.expectedReturnDate || jo.expectedReturnDate || '2026-02-22',
+                  issueDate: s.issueDate || jo.date || '',
+                  expectedReturnDate: s.expectedReturnDate || jo.expectedReturnDate || '',
                   receivedQty: Number(s.receivedQty || 0),
                   pendingQty: Number(s.pendingQty || qty),
-                  location: s.location || 'SUBCON-01 - Heat Treatment Bay',
+                  location: s.location || '',
                   priority: s.priority || 'NORMAL',
                   status: s.status || jo.status || 'PLANNED',
                   remarks: s.remarks,
@@ -116,22 +120,22 @@ export default function JoSchedulePage() {
                 const price = Number(l.unitPrice || l.rate || 120);
                 list.push({
                   id: i + 1,
-                  joNo: jo.docNo || 'JO-2026-0001',
-                  refDocNo: jo.docNo,
-                  subcontractor: jo.supplierJobWorker || jo.supplier || 'Precision Heat Treaters',
-                  subcontractorCode: jo.supplierCode || 'SUB-001',
-                  process: jo.process || 'Heat Treatment',
-                  itemCode: l.itemCode || 'ITEM-001',
-                  itemDescription: l.description || l.itemName || l.itemDesc || 'Precision Component',
-                  uom: l.uom || 'PCS',
+                  joNo: jo.docNo || '',
+                  refDocNo: jo.docNo || '',
+                  subcontractor: jo.supplierJobWorker || jo.supplier || '',
+                  subcontractorCode: jo.supplierCode || '',
+                  process: jo.process || '',
+                  itemCode: l.itemCode || '',
+                  itemDescription: l.description || l.itemName || l.itemDesc || '',
+                  uom: l.uom || '',
                   unitPrice: price,
                   totalAmount: qty * price,
                   scheduledQty: qty,
-                  issueDate: jo.date || '2026-02-15',
-                  expectedReturnDate: jo.expectedReturnDate || '2026-02-22',
+                  issueDate: jo.date || '',
+                  expectedReturnDate: jo.expectedReturnDate || '',
                   receivedQty: 0,
                   pendingQty: qty,
-                  location: 'SUBCON-01 - Heat Treatment Bay',
+                  location: '',
                   priority: 'NORMAL',
                   status: jo.status || 'PLANNED',
                 });
@@ -139,100 +143,11 @@ export default function JoSchedulePage() {
             }
           });
         }
-        if (list.length === 0) {
-          list.push(
-            {
-              id: 1,
-              joNo: 'JO-2026-0001',
-              refDocNo: 'JQUOT-2026-0001',
-              subcontractor: 'Precision Heat Treaters',
-              subcontractorCode: 'SUB-001',
-              process: 'Heat Treatment',
-              itemCode: 'ITEM-001',
-              itemDescription: 'Precision CNC Shaft 25mm',
-              uom: 'PCS',
-              unitPrice: 120,
-              totalAmount: 24000,
-              scheduledQty: 200,
-              issueDate: '2026-02-16',
-              expectedReturnDate: '2026-02-23',
-              receivedQty: 100,
-              pendingQty: 100,
-              location: 'SUBCON-01 - Heat Treatment Bay',
-              priority: 'HIGH',
-              status: 'IN_PROCESS',
-            },
-            {
-              id: 2,
-              joNo: 'JO-2026-0002',
-              refDocNo: 'JQUOT-2026-0002',
-              subcontractor: 'Apex Plating Works',
-              subcontractorCode: 'SUB-002',
-              process: 'Plating',
-              itemCode: 'ITEM-003',
-              itemDescription: 'High Speed Steel Drill Bits 12mm',
-              uom: 'NOS',
-              unitPrice: 45,
-              totalAmount: 15750,
-              scheduledQty: 350,
-              issueDate: '2026-02-18',
-              expectedReturnDate: '2026-02-25',
-              receivedQty: 0,
-              pendingQty: 350,
-              location: 'STORE-02 - Subcontracting Store',
-              priority: 'NORMAL',
-              status: 'MATERIAL_ISSUED',
-            }
-          );
-        }
         setSchedules(list);
         setLoading(false);
       })
       .catch(() => {
-        setSchedules([
-          {
-            id: 1,
-            joNo: 'JO-2026-0001',
-            refDocNo: 'JQUOT-2026-0001',
-            subcontractor: 'Precision Heat Treaters',
-            subcontractorCode: 'SUB-001',
-            process: 'Heat Treatment',
-            itemCode: 'ITEM-001',
-            itemDescription: 'Precision CNC Shaft 25mm',
-            uom: 'PCS',
-            unitPrice: 120,
-            totalAmount: 24000,
-            scheduledQty: 200,
-            issueDate: '2026-02-16',
-            expectedReturnDate: '2026-02-23',
-            receivedQty: 100,
-            pendingQty: 100,
-            location: 'SUBCON-01 - Heat Treatment Bay',
-            priority: 'HIGH',
-            status: 'IN_PROCESS',
-          },
-          {
-            id: 2,
-            joNo: 'JO-2026-0002',
-            refDocNo: 'JQUOT-2026-0002',
-            subcontractor: 'Apex Plating Works',
-            subcontractorCode: 'SUB-002',
-            process: 'Plating',
-            itemCode: 'ITEM-003',
-            itemDescription: 'High Speed Steel Drill Bits 12mm',
-            uom: 'NOS',
-            unitPrice: 45,
-            totalAmount: 15750,
-            scheduledQty: 350,
-            issueDate: '2026-02-18',
-            expectedReturnDate: '2026-02-25',
-            receivedQty: 0,
-            pendingQty: 350,
-            location: 'STORE-02 - Subcontracting Store',
-            priority: 'NORMAL',
-            status: 'MATERIAL_ISSUED',
-          },
-        ]);
+        setSchedules([]);
         setLoading(false);
       });
 
@@ -245,23 +160,13 @@ export default function JoSchedulePage() {
       if (suppRes.status === 'fulfilled' && Array.isArray(suppRes.value.data)) {
         setSubcontractors(suppRes.value.data);
       } else {
-        setSubcontractors([
-          { code: 'SUB-001', name: 'Precision Heat Treaters', contactPerson: 'Ramesh Patel', phone: '9822099881' },
-          { code: 'SUB-002', name: 'Apex Plating Works', contactPerson: 'Suresh Kumar', phone: '9844011223' },
-          { code: 'SUB-003', name: 'Mahindra Electroplaters', contactPerson: 'Karan Shah', phone: '9711055443' },
-          { code: 'SUB-004', name: 'Star CNC Machinists', contactPerson: 'Dinesh Joshi', phone: '9900188776' },
-        ]);
+        setSubcontractors([]);
       }
 
       if (itemRes.status === 'fulfilled' && Array.isArray(itemRes.value.data)) {
         setItems(itemRes.value.data);
       } else {
-        setItems([
-          { code: 'ITEM-001', name: 'Precision CNC Shaft 25mm', uom: 'PCS', price: 120 },
-          { code: 'ITEM-002', name: 'Hex Head Bolt M10 x 50mm', uom: 'NOS', price: 15 },
-          { code: 'ITEM-003', name: 'High Speed Steel Drill Bits 12mm', uom: 'SET', price: 45 },
-          { code: 'ITEM-004', name: 'Cold Rolled Steel Sheet 2mm', uom: 'SHEET', price: 350 },
-        ]);
+        setItems([]);
       }
 
       const refs: any[] = [];
@@ -272,23 +177,16 @@ export default function JoSchedulePage() {
             id: `JO-${j.docNo}`,
             docNo: j.docNo,
             type: 'Job Order',
-            subcontractor: j.supplierJobWorker || j.supplier || 'Precision Heat Treaters',
-            subcontractorCode: j.supplierCode || 'SUB-001',
-            process: j.process || 'Heat Treatment',
-            itemCode: l0.itemCode || 'ITEM-001',
-            itemDescription: l0.description || l0.itemName || l0.itemDesc || 'Precision CNC Shaft 25mm',
-            qty: Number(l0.orderQty || l0.qty || 100),
-            uom: l0.uom || 'PCS',
-            unitPrice: Number(l0.unitPrice || l0.rate || 120),
+            subcontractor: j.supplierJobWorker || j.supplier || '',
+            subcontractorCode: j.supplierCode || '',
+            process: j.process || '',
+            itemCode: l0.itemCode || '',
+            itemDescription: l0.description || l0.itemName || l0.itemDesc || '',
+            qty: Number(l0.orderQty || l0.qty || 0),
+            uom: l0.uom || '',
+            unitPrice: Number(l0.unitPrice || l0.rate || 0),
           });
         });
-      }
-      if (refs.length === 0) {
-        refs.push(
-          { id: 'REF-1', docNo: 'JQUOT-2026-0001', type: 'Subcon Quotation', subcontractor: 'Precision Heat Treaters', subcontractorCode: 'SUB-001', process: 'Heat Treatment', itemCode: 'ITEM-001', itemDescription: 'Precision CNC Shaft 25mm', qty: 200, uom: 'PCS', unitPrice: 120 },
-          { id: 'REF-2', docNo: 'JQUOT-2026-0002', type: 'Subcon Quotation', subcontractor: 'Apex Plating Works', subcontractorCode: 'SUB-002', process: 'Plating', itemCode: 'ITEM-003', itemDescription: 'High Speed Steel Drill Bits 12mm', qty: 350, uom: 'NOS', unitPrice: 45 },
-          { id: 'REF-3', docNo: 'JO-2026-0001', type: 'Job Order', subcontractor: 'Mahindra Electroplaters', subcontractorCode: 'SUB-003', process: 'Anodizing', itemCode: 'ITEM-004', itemDescription: 'Cold Rolled Steel Sheet 2mm', qty: 150, uom: 'SHEET', unitPrice: 350 }
-        );
       }
       setReferenceDocs(refs);
     }).catch(() => {});
@@ -409,7 +307,7 @@ export default function JoSchedulePage() {
       activity: `Scheduled JO Subcontract (${created.joNo})`,
       refNo: created.joNo,
       party: created.subcontractor,
-      user: 'Sanjai M',
+      user: user?.username || 'Unknown',
       status: 'PLANNED',
     });
 
@@ -426,6 +324,7 @@ export default function JoSchedulePage() {
       unitPrice: 120,
       scheduledQty: 100,
       totalAmount: 12000,
+      contactPerson: '',
       issueDate: new Date().toISOString().split('T')[0],
       expectedReturnDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       location: 'SUBCON-01 - Heat Treatment Bay',
@@ -468,7 +367,7 @@ export default function JoSchedulePage() {
             border: '1px solid #7367f0',
             display: 'flex',
             alignItems: 'center',
-            justify: 'space-between',
+            justifyContent: 'space-between',
             gap: '16px',
             boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
           }}
@@ -545,6 +444,38 @@ export default function JoSchedulePage() {
               style={{ width: '280px' }}
             />
           </div>
+          <button
+            className="ibtn"
+            title="Export CSV"
+            onClick={() =>
+              exportToCsv(
+                filtered as unknown as Record<string, unknown>[],
+                [
+                  { key: 'joNo', label: 'JO No' },
+                  { key: 'refDocNo', label: 'Ref Doc No' },
+                  { key: 'subcontractor', label: 'Subcontractor' },
+                  { key: 'subcontractorCode', label: 'Subcontractor Code' },
+                  { key: 'process', label: 'Process' },
+                  { key: 'itemCode', label: 'Item Code' },
+                  { key: 'itemDescription', label: 'Item Description' },
+                  { key: 'uom', label: 'UOM' },
+                  { key: 'unitPrice', label: 'Unit Price' },
+                  { key: 'scheduledQty', label: 'Scheduled Qty' },
+                  { key: 'totalAmount', label: 'Est Amount' },
+                  { key: 'issueDate', label: 'Issue Date' },
+                  { key: 'expectedReturnDate', label: 'Expected Return Date' },
+                  { key: 'receivedQty', label: 'Received Qty' },
+                  { key: 'pendingQty', label: 'Pending Qty' },
+                  { key: 'location', label: 'Location' },
+                  { key: 'priority', label: 'Priority' },
+                  { key: 'status', label: 'Status' },
+                ],
+                'jo-subcontract-schedules'
+              )
+            }
+          >
+            <span className="material-symbols-rounded">download</span>
+          </button>
           <span className="count">{filtered.length} schedules</span>
         </div>
 

@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 import in.zygertechnology.zygererp.repo.PartyRepository;
 import in.zygertechnology.zygererp.repo.ItemRepository;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -47,9 +48,29 @@ public class SalesService {
 
         if (customerCode != null && !customerCode.isBlank()) {
             if (parties.existsByCode(customerCode)) {
-                validateCustomerCredit(customerCode, null);
+                BigDecimal orderAmount = computeOrderAmount(key, body);
+                validateCustomerCredit(customerCode, orderAmount);
             }
         }
+    }
+
+    private BigDecimal computeOrderAmount(String key, Map<String, Object> body) {
+        if (!"sales-order".equals(key)) return null;
+        Object linesObj = body.get("lines");
+        if (!(linesObj instanceof List<?> lineList)) return null;
+        BigDecimal total = BigDecimal.ZERO;
+        for (Object obj : lineList) {
+            if (!(obj instanceof Map<?, ?> m)) continue;
+            BigDecimal qty = toBD(m.get("orderQty"));
+            BigDecimal rate = toBD(m.get("unitPrice"));
+            total = total.add(qty.multiply(rate));
+        }
+        return total;
+    }
+
+    private BigDecimal toBD(Object v) {
+        if (v == null) return BigDecimal.ZERO;
+        try { return new BigDecimal(String.valueOf(v)); } catch (Exception e) { return BigDecimal.ZERO; }
     }
 
     private void validateCustomerCredit(String customerCode, BigDecimal orderAmount) {
@@ -243,7 +264,13 @@ public class SalesService {
 
     @Transactional
     public DocEntity action(String key, Long id, String action, String note, String user) {
-        DocEntity e = docs.action(key, id, action, note, user);
+        return action(key, id, action, note, user, Map.of());
+    }
+
+    @Transactional
+    public DocEntity action(String key, Long id, String action, String note, String user,
+                            Map<String, Object> opts) {
+        DocEntity e = docs.action(key, id, action, note, user, opts);
         postActionHook(key, e, action, user);
         return e;
     }
@@ -265,46 +292,134 @@ public class SalesService {
                 }
             }
             case "sales-dc" -> {
-                if (e.getLines() != null) {
-                    for (LineEntity line : e.getLines()) {
-                        stockService.recordStockOut(
-                                e.getDocNo(), "sales-dc", "SALES_DISPATCH",
-                                line.getItemCode(), line.getLocation(), line.getBatchNo(), line.getHeatNo(),
-                                line.getQty(), e.getDocDate(), user
-                        );
-                    }
+                if ("post".equals(action) && e instanceof SalesDc sdc) {
+                    updateSoFromDispatch(sdc, user);
+                }
+            }
+            case "sales-invoice" -> {
+                if ("post".equals(action) && e instanceof SalesInvoice si) {
+                    updateSoFromInvoice(si, user);
                 }
             }
             case "dc-return" -> {
                 if (e instanceof DcReturn dr) {
                     if (dr.getDisposition() == null) dr.setDisposition("PENDING_INSPECTION");
-                    if (dr.getLines() != null) {
-                        for (LineEntity line : dr.getLines()) {
-                            stockService.recordStockIn(
-                                    e.getDocNo(), "dc-return", "SALES_RETURN",
-                                    line.getItemCode(), line.getLocation(), line.getBatchNo(), line.getHeatNo(),
-                                    line.getQty(), e.getDocDate(), user
-                            );
-                        }
+                    if ("post".equals(action)) {
+                        updateSoFromReturn(dr, user);
                     }
                 }
             }
             case "invoice-return" -> {
                 if (e instanceof InvoiceReturn ir) {
                     if (ir.getDisposition() == null) ir.setDisposition("PENDING_INSPECTION");
-                    if (ir.getLines() != null) {
-                        for (LineEntity line : ir.getLines()) {
-                            stockService.recordStockIn(
-                                    e.getDocNo(), "invoice-return", "SALES_RETURN",
-                                    line.getItemCode(), line.getLocation(), line.getBatchNo(), line.getHeatNo(),
-                                    line.getQty(), e.getDocDate(), user
-                            );
-                        }
+                    if ("post".equals(action)) {
+                        updateSoFromReturn2(ir, user);
                     }
                 }
             }
             default -> {}
         }
+    }
+
+    private void updateSoFromDispatch(SalesDc sdc, String user) {
+        String soNo = sdc.getSalesOrderNo();
+        if (soNo == null || soNo.isBlank()) return;
+        try {
+            DocEntity doc = docs.getByNumber("sales-order", soNo);
+            if (!(doc instanceof SalesOrder so)) return;
+            if (so.getLines() == null) return;
+
+            BigDecimal dcTotal = BigDecimal.ZERO;
+            for (SalesDcLine dcLine : sdc.getLines()) {
+                dcTotal = dcTotal.add(dcLine.getQty() == null ? BigDecimal.ZERO : dcLine.getQty());
+            }
+
+            BigDecimal currentDispatched = so.getDispatchedQty() == null ? BigDecimal.ZERO : so.getDispatchedQty();
+            BigDecimal newDispatched = currentDispatched.add(dcTotal);
+            BigDecimal ordered = so.getOrderedQty() == null ? BigDecimal.ZERO : so.getOrderedQty();
+
+            if (newDispatched.compareTo(ordered) > 0) {
+                throw new IllegalStateException("Dispatch qty " + dcTotal + " exceeds SO pending. " +
+                    "Ordered: " + ordered + ", Already dispatched: " + currentDispatched);
+            }
+
+            so.setDispatchedQty(newDispatched);
+            so.setPendingQty(ordered.subtract(newDispatched));
+            if (newDispatched.compareTo(BigDecimal.ZERO) > 0 && newDispatched.compareTo(ordered) < 0) {
+                so.setStatus("PARTIALLY_DISPATCHED");
+            } else if (newDispatched.compareTo(ordered) >= 0) {
+                so.setStatus("DISPATCHED");
+            }
+            so.setUpdatedAt(Instant.now());
+            so.setUpdatedBy(user);
+        } catch (IllegalStateException ex) {
+            throw ex;
+        } catch (Exception ignored) {}
+    }
+
+    private void updateSoFromInvoice(SalesInvoice si, String user) {
+        String soNo = si.getSalesOrderNumber();
+        if (soNo == null || soNo.isBlank()) return;
+        try {
+            DocEntity doc = docs.getByNumber("sales-order", soNo);
+            if (!(doc instanceof SalesOrder so)) return;
+
+            BigDecimal invTotal = BigDecimal.ZERO;
+            for (SalesInvoiceItem invLine : si.getLines()) {
+                invTotal = invTotal.add(invLine.getQty() == null ? BigDecimal.ZERO : invLine.getQty());
+            }
+
+            BigDecimal currentInvoiced = so.getInvoicedQty() == null ? BigDecimal.ZERO : so.getInvoicedQty();
+            BigDecimal dispatched = so.getDispatchedQty() == null ? BigDecimal.ZERO : so.getDispatchedQty();
+            BigDecimal eligibleQty = dispatched.subtract(currentInvoiced);
+            if (eligibleQty.compareTo(BigDecimal.ZERO) > 0 && invTotal.compareTo(eligibleQty) > 0) {
+                throw new IllegalStateException(
+                    "Invoice qty " + invTotal + " exceeds eligible sales qty. Dispatched: " + dispatched +
+                    ", already invoiced: " + currentInvoiced + ", eligible: " + eligibleQty);
+            }
+
+            so.setInvoicedQty(currentInvoiced.add(invTotal));
+            so.setUpdatedAt(Instant.now());
+            so.setUpdatedBy(user);
+        } catch (IllegalStateException e) { throw e; } catch (Exception ignored) {}
+    }
+
+    private void updateSoFromReturn(DcReturn dr, String user) {
+        String soNo = dr.getSalesOrderNumber();
+        if (soNo == null || soNo.isBlank()) return;
+        try {
+            DocEntity doc = docs.getByNumber("sales-order", soNo);
+            if (!(doc instanceof SalesOrder so)) return;
+
+            BigDecimal returnTotal = BigDecimal.ZERO;
+            for (DcReturnLine rl : dr.getLines()) {
+                returnTotal = returnTotal.add(rl.getQty() == null ? BigDecimal.ZERO : rl.getQty());
+            }
+
+            BigDecimal currentReturned = so.getReturnedQty() == null ? BigDecimal.ZERO : so.getReturnedQty();
+            so.setReturnedQty(currentReturned.add(returnTotal));
+            so.setUpdatedAt(Instant.now());
+            so.setUpdatedBy(user);
+        } catch (IllegalStateException e) { throw e; } catch (Exception ignored) {}
+    }
+
+    private void updateSoFromReturn2(InvoiceReturn ir, String user) {
+        String soNo = ir.getSalesOrderNumber();
+        if (soNo == null || soNo.isBlank()) return;
+        try {
+            DocEntity doc = docs.getByNumber("sales-order", soNo);
+            if (!(doc instanceof SalesOrder so)) return;
+
+            BigDecimal returnTotal = BigDecimal.ZERO;
+            for (InvoiceReturnLine rl : ir.getLines()) {
+                returnTotal = returnTotal.add(rl.getQty() == null ? BigDecimal.ZERO : rl.getQty());
+            }
+
+            BigDecimal currentReturned = so.getReturnedQty() == null ? BigDecimal.ZERO : so.getReturnedQty();
+            so.setReturnedQty(currentReturned.add(returnTotal));
+            so.setUpdatedAt(Instant.now());
+            so.setUpdatedBy(user);
+        } catch (IllegalStateException e) { throw e; } catch (Exception ignored) {}
     }
 
     @Transactional(readOnly = true)
@@ -314,7 +429,7 @@ public class SalesService {
         d.put("pendingApproval", countByStatus("sales-order", "SUBMITTED"));
         d.put("approvedOrders", countByStatus("sales-order", "APPROVED"));
         d.put("partiallyDispatched", countByStatus("sales-order", "PARTIALLY_DISPATCHED"));
-        d.put("overdueOrders", countByStatus("sales-order", "OVERDUE"));
+        d.put("overdueOrders", computeOverdueSOs());
         d.put("pendingPi", countByStatus("proforma-invoice", "SUBMITTED"));
         d.put("pendingDispatch", countByStatus("sales-dc", "SUBMITTED"));
         d.put("dispatched", countByStatus("sales-dc", "DISPATCHED"));
@@ -329,10 +444,30 @@ public class SalesService {
         return d;
     }
 
+    private long computeOverdueSOs() {
+        LocalDate today = LocalDate.now();
+        long overdue = 0;
+        for (String status : List.of("APPROVED", "PARTIALLY_DISPATCHED")) {
+            Map<String, Object> page = docs.list("sales-order", Map.of("status", status, "size", "1000", "page", "0"));
+            Object content = page.get("content");
+            if (content instanceof List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof DocEntity de && de.getDocNo() != null) {
+                        DocEntity full = docs.getByNumber("sales-order", de.getDocNo());
+                        if (full instanceof SalesOrder so && so.getDeliveryDate() != null && so.getDeliveryDate().isBefore(today)) {
+                            overdue++;
+                        }
+                    }
+                }
+            }
+        }
+        return overdue;
+    }
+
     private long countByStatus(String key, String status) {
         Map<String, Object> page = docs.list(key, Map.of("status", status, "size", "1", "page", "0"));
-        Object content = page.getOrDefault("content", List.of());
-        if (content instanceof List<?> l) return l.size();
+        Object total = page.get("totalElements");
+        if (total instanceof Number n) return n.longValue();
         return 0;
     }
 }

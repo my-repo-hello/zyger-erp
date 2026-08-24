@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 import { printDocument as printDoc } from '../../../utils/printDocument';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface LogSheet {
   id: number;
@@ -51,6 +53,24 @@ export default function ProductionLogScreen() {
   const [actForm, setActForm] = useState<Record<string, unknown>>({});
   const [editActId, setEditActId] = useState<number | null>(null);
   const [deleteActTarget, setDeleteActTarget] = useState<Activity | null>(null);
+  const [machines, setMachines] = useState<Array<{ code: string; name: string }>>([]);
+  const [users, setUsers] = useState<Array<{ username: string; fullName: string }>>([]);
+  const [shifts, setShifts] = useState<Array<{ code: string; name: string }>>([]);
+
+  const fetchMasters = useCallback(async () => {
+    try {
+      const [mRes, uRes, sRes] = await Promise.allSettled([
+        apiClient.get('/master/machines', { params: { size: 200 } }),
+        apiClient.get('/master/users', { params: { size: 200 } }),
+        apiClient.get('/master/shifts', { params: { size: 100 } }),
+      ]);
+      if (mRes.status === 'fulfilled') setMachines((mRes.value.data?.content ?? mRes.value.data ?? []).filter((m: any) => m.active !== false));
+      if (uRes.status === 'fulfilled') setUsers((uRes.value.data?.content ?? uRes.value.data ?? []).filter((u: any) => u.active !== false));
+      if (sRes.status === 'fulfilled') setShifts(sRes.value.data?.content ?? sRes.value.data ?? []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (tab === 'form') fetchMasters(); }, [tab, fetchMasters]);
   const [tab, setTab] = useState<'list' | 'form'>('list');
 
   const load = async () => {
@@ -139,9 +159,25 @@ export default function ProductionLogScreen() {
             <label className="fld"><span>Log Date</span><input className="in" type="date" value={String(form.logDate ?? '').slice(0, 10)} onChange={(e) => set('logDate', e.target.value)} /></label>
             <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
             <label className="fld"><span>Job Card No</span><input className="in" value={String(form.jobCardNumber ?? '')} onChange={(e) => set('jobCardNumber', e.target.value)} /></label>
-            <label className="fld"><span>Machine Code</span><input className="in" value={String(form.machineCode ?? '')} onChange={(e) => set('machineCode', e.target.value)} /></label>
-            <label className="fld"><span>Operator Code</span><input className="in" value={String(form.operatorCode ?? '')} onChange={(e) => set('operatorCode', e.target.value)} /></label>
-            <label className="fld"><span>Shift Code</span><input className="in" value={String(form.shiftCode ?? '')} onChange={(e) => set('shiftCode', e.target.value)} /></label>
+            <label className="fld"><span>Machine Code</span>
+              <select className="in" value={String(form.machineCode ?? '')} onChange={(e) => set('machineCode', e.target.value)}>
+                <option value="">Select machine...</option>
+                {machines.map((m) => <option key={m.code} value={m.code}>{m.code} - {m.name}</option>)}
+                {form.machineCode && !machines.some((m) => m.code === form.machineCode) && <option value={String(form.machineCode)}>{String(form.machineCode)}</option>}
+              </select>
+            </label>
+            <label className="fld"><span>Operator Code</span>
+              <select className="in" value={String(form.operatorCode ?? '')} onChange={(e) => set('operatorCode', e.target.value)}>
+                <option value="">Select operator...</option>
+                {users.map((u) => <option key={u.username} value={u.username}>{u.username} - {u.fullName || u.username}</option>)}
+              </select>
+            </label>
+            <label className="fld"><span>Shift Code</span>
+              <select className="in" value={String(form.shiftCode ?? '')} onChange={(e) => set('shiftCode', e.target.value)}>
+                <option value="">Select shift...</option>
+                {shifts.map((s) => <option key={s.code} value={s.code}>{s.code} - {s.name}</option>)}
+              </select>
+            </label>
             <label className="fld"><span>Remarks</span><input className="in" value={String(form.remarks ?? '')} onChange={(e) => set('remarks', e.target.value)} /></label>
           </div>
           <div className="actbar">
@@ -156,6 +192,14 @@ export default function ProductionLogScreen() {
         <div className="panel">
           <div className="toolbar">
             <input className="in" placeholder="Search log sheets..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(filtered as unknown as Record<string, unknown>[], [
+              { key: 'logNumber', label: 'Doc No' },
+              { key: 'logDate', label: 'Date' },
+              { key: 'machineCode', label: 'Machine' },
+              { key: 'operatorCode', label: 'Operator' },
+              { key: 'shiftCode', label: 'Shift' },
+              { key: 'status', label: 'Status' },
+            ], 'production-log-sheets')}><span className="material-symbols-rounded">download</span></button>
             <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Log Sheet</button>
           </div>
           <div className="twrap">
@@ -172,10 +216,11 @@ export default function ProductionLogScreen() {
                         <td>{r.machineCode ?? '-'}</td>
                         <td>{r.operatorCode ?? '-'}</td>
                         <td>{r.shiftCode ?? '-'}</td>
-                        <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                        <td><StatusBadge status={r.status} variant={SC} /></td>
                         <td>
                           {r.status === 'DRAFT' && <button className="ibtn" title="Verify" onClick={(e) => { e.stopPropagation(); action(r.id, 'verify'); }}><span className="material-symbols-rounded">fact_check</span></button>}
                           {r.status === 'VERIFIED' && <button className="ibtn" title="Close" onClick={(e) => { e.stopPropagation(); action(r.id, 'close'); }}><span className="material-symbols-rounded">lock</span></button>}
+                          {r.status !== 'CLOSED' && <button className="ibtn" title="Cancel" onClick={(e) => { e.stopPropagation(); action(r.id, 'cancel'); }}><span className="material-symbols-rounded">block</span></button>}
                           <button className="ibtn" title="Edit" onClick={(e) => { e.stopPropagation(); setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
                           <button className="ibtn" title="Print" onClick={(e) => { e.stopPropagation(); printDocument(r.id, 'print'); }}><span className="material-symbols-rounded">print</span></button>
                           <button className="ibtn" title="Download PDF" onClick={(e) => { e.stopPropagation(); printDocument(r.id, 'download'); }}><span className="material-symbols-rounded">download</span></button>

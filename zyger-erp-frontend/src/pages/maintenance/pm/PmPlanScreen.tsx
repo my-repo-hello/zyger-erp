@@ -3,6 +3,7 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface PmPlan {
   id: number;
@@ -151,7 +152,7 @@ export default function PmPlanScreen() {
                       <td>{r.machineCode}</td>
                       <td>{(r.frequency ?? '').replace(/_/g, ' ')}</td>
                       <td>{r.nextDueDate ? new Date(r.nextDueDate).toLocaleDateString() : '-'}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td style={{ position: 'relative' }}>
                         <button className="ibtn" title="Actions" onClick={(e) => { e.stopPropagation(); setOpenActionMenu(openActionMenu === r.id ? null : r.id); }}>
                           <span className="material-symbols-rounded">more_vert</span>

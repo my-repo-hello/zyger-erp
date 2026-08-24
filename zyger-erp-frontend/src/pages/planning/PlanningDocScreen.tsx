@@ -14,6 +14,9 @@ import { getApiErrorMessage } from '../../utils/apiError';
 import { useToast } from '../../contexts/ToastContext';
 import StatusBadge from '../../components/common/StatusBadge';
 import ConfirmActionModal from '../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../components/common/AuditHistoryDrawer';
+import { auditEntityTypeFor } from '../../utils/auditEntity';
+import { exportToCsv } from '../../utils/csvExport';
 
 const PAGE_SIZE = 8;
 
@@ -45,6 +48,7 @@ export default function PlanningDocScreen({ config, initialDocId, viewOnly = fal
   const [lines, setLines] = useState<Array<Record<string, unknown>>>([]);
   const [initializedForId, setInitializedForId] = useState('');
   const [actionModal, setActionModal] = useState<ActionModal | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   const listQuery = usePlanningDocList(docType, {
     page,
@@ -184,6 +188,19 @@ export default function PlanningDocScreen({ config, initialDocId, viewOnly = fal
             <span className="material-symbols-rounded">search</span>
             <input className="in" value={searchInput} placeholder="Search..." onChange={(e) => setSearchInput(e.target.value)} />
           </div>
+          <button
+            className="ibtn"
+            title="Export CSV"
+            onClick={() =>
+              exportToCsv(
+                rows as unknown as Record<string, unknown>[],
+                config.columns.map((c) => ({ key: c.field, label: c.label })),
+                config.docType
+              )
+            }
+          >
+            <span className="material-symbols-rounded">download</span>
+          </button>
           <span className="count">{formatNumber(totalElements)} record{totalElements === 1 ? '' : 's'}</span>
           <select className="in" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All Status</option>
@@ -259,7 +276,16 @@ export default function PlanningDocScreen({ config, initialDocId, viewOnly = fal
       <div className="note"><span className="material-symbols-rounded">info</span><span>Workflow: DRAFT {'\u2192'} SUBMITTED {'\u2192'} APPROVED \u2022 Only DRAFT/REJECTED records are editable</span></div>
       <form onSubmit={(e) => e.preventDefault()}>
         <div className="panel">
-          <div className="panel-h"><h2><span className="material-symbols-rounded">description</span> Header</h2>{documentId && <StatusBadge status={genericStatus} />}</div>
+          <div className="panel-h"><h2><span className="material-symbols-rounded">description</span> Header</h2>
+            {documentId && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" className="btn btn-sm" title="Audit History" onClick={() => setAuditOpen(true)}>
+                  <span className="material-symbols-rounded">history</span> Audit
+                </button>
+                <StatusBadge status={genericStatus} />
+              </div>
+            )}
+          </div>
           <div className="fgrid">
             {config.fields.map((field) => (
               <label key={field.key} className={`fld ${field.span2 ? 'span2' : ''}`}>
@@ -352,6 +378,7 @@ export default function PlanningDocScreen({ config, initialDocId, viewOnly = fal
         </div>
       </form>
       <ConfirmActionModal open={Boolean(actionModal)} title={`${actionModal?.action ?? ''} ${docNo}`} body={actionModal?.action === 'approve' ? 'Approving records the action with your user in the audit trail.' : actionModal?.action === 'reject' ? 'Reason for rejection:' : actionModal?.action === 'cancel' ? 'This cancels the record with an audit trail.' : 'Submit this record for review?'} okLabel={actionModal ? actionModal.action.charAt(0).toUpperCase() + actionModal.action.slice(1) : 'Confirm'} danger={actionModal?.danger} busy={actionMutation.isPending} onClose={() => setActionModal(null)} onConfirm={(note) => actionModal && runAction(actionModal.action, note)} />
+      <AuditHistoryDrawer open={auditOpen} entityType={auditEntityTypeFor(docType)} entityId={documentId ?? undefined} onClose={() => setAuditOpen(false)} />
     </>
   );
 }

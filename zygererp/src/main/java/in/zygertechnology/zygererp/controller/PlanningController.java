@@ -3,6 +3,7 @@ package in.zygertechnology.zygererp.controller;
 import in.zygertechnology.zygererp.service.DocumentFacade;
 import in.zygertechnology.zygererp.service.ExportService;
 import in.zygertechnology.zygererp.service.PlanningService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -14,6 +15,7 @@ import java.util.*;
 
 @RestController
 @RequestMapping("/api/v1/planning")
+@RequirePermission(module = "PLANNING", screen = "*", action = "VIEW")
 @RequiredArgsConstructor
 public class PlanningController {
 

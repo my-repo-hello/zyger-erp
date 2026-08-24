@@ -2,13 +2,17 @@ package in.zygertechnology.zygererp.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 
-@Entity @Table(name="party_master") @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@Entity @Table(name="party_master")
+@EntityListeners(AuditEntityListener.class)
+@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class Party {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
+    @Column(name = "approval_status", length = 30) @Builder.Default String approvalStatus = "APPROVED";
     @Column(length = 20) String kind;
     @Column(length = 60) String code;
     @Column(length = 120) String name;

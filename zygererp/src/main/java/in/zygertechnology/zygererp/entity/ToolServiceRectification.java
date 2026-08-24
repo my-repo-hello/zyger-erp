@@ -44,6 +44,9 @@ public class ToolServiceRectification {
     @Column(name = "parts_used", columnDefinition = "TEXT")
     private String partsUsed;
 
+    @Column(name = "plant_id")
+    private Long plantId;
+
     @Column(name = "service_cost", precision = 18, scale = 2)
     private BigDecimal serviceCost;
 

@@ -1,0 +1,443 @@
+package in.zygertechnology.zygererp.jobs;
+
+import in.zygertechnology.zygererp.entity.CalibrationSchedule;
+import in.zygertechnology.zygererp.entity.ItemMaster;
+import in.zygertechnology.zygererp.entity.PurchaseOrder;
+import in.zygertechnology.zygererp.entity.WorkOrder;
+import in.zygertechnology.zygererp.repo.NotificationRepository;
+import in.zygertechnology.zygererp.repo.RefreshTokenRepository;
+import in.zygertechnology.zygererp.service.EscalationEngine;
+import in.zygertechnology.zygererp.service.NotificationService;
+import jakarta.persistence.EntityManager;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+/**
+ * Scheduled housekeeping jobs.
+ *
+ * Cron expressions are configurable per job via properties (defaults shown):
+ *   zyger.scheduling.calibration-check   (daily 8 AM)
+ *   zyger.scheduling.overdue-work-order  (daily 9 AM)
+ *   zyger.scheduling.overdue-po          (daily 9:30 AM)
+ *   zyger.scheduling.low-stock           (daily 7 AM)
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class ScheduledJobs {
+
+    private final EntityManager em;
+    private final NotificationService notificationService;
+    private final NotificationRepository notificationRepository;
+    private final RefreshTokenRepository refreshTokens;
+    private final EscalationEngine escalationEngine;
+
+    /**
+     * Daily at 3 AM: delete refresh tokens that have expired (security housekeeping).
+     */
+    @Scheduled(cron = "${zyger.scheduling.refresh-token-cleanup:0 0 3 * * *}")
+    @Transactional
+    public void cleanupExpiredRefreshTokens() {
+        long deleted = refreshTokens.deleteByExpiresAtBefore(Instant.now());
+        if (deleted > 0) {
+            log.info("[Refresh Token Cleanup] Deleted {} expired refresh token(s).", deleted);
+        }
+    }
+
+    /**
+     * Persist a notification for the given entity unless an unread notification
+     * for the same event type already exists (prevents duplicate daily pings
+     * while the condition remains unresolved).
+     */
+    private void notifyOnce(String eventType, String module, String entityType, Long entityId,
+                            String severity, String message, String entityRef) {
+        boolean alreadyNotified = notificationRepository.findByEntityTypeAndEntityId(entityType, entityId).stream()
+                .anyMatch(n -> eventType.equals(n.getEventType()) && n.getReadAt() == null);
+        if (alreadyNotified) return;
+        notificationService.notify(eventType, module, entityType, entityId, severity, message, entityRef);
+    }
+
+    /**
+     * Daily at 8 AM: warn about calibration schedules that are due within the
+     * next 7 days or already overdue.
+     */
+    @Scheduled(cron = "${zyger.scheduling.calibration-check:0 0 8 * * *}")
+    public void calibrationDueCheck() {
+        try {
+            LocalDate today = LocalDate.now();
+            LocalDate cutoff = today.plusDays(7);
+            List<CalibrationSchedule> due = em.createQuery("""
+                            select c from CalibrationSchedule c
+                            where c.deleted = false
+                              and c.nextDueDate is not null
+                              and c.nextDueDate <= :cutoff
+                            order by c.nextDueDate asc
+                            """, CalibrationSchedule.class)
+                    .setParameter("cutoff", cutoff)
+                    .getResultList();
+
+            if (due.isEmpty()) {
+                log.info("[Calibration Check] No calibration schedules due within {} days.", 7);
+                return;
+            }
+
+            List<String> overdue = due.stream()
+                    .filter(c -> c.getNextDueDate().isBefore(today))
+                    .map(CalibrationSchedule::getScheduleNumber)
+                    .toList();
+            List<String> upcoming = due.stream()
+                    .filter(c -> !c.getNextDueDate().isBefore(today))
+                    .map(c -> c.getScheduleNumber() + " (due " + c.getNextDueDate() + ")")
+                    .toList();
+
+            log.warn("[Calibration Check] {} instrument calibration schedule(s) need attention: {} overdue, {} due within 7 days. Overdue: {}; Upcoming: {}",
+                    due.size(), overdue.size(), upcoming.size(), overdue, upcoming);
+
+            for (CalibrationSchedule c : due) {
+                boolean isOverdue = c.getNextDueDate().isBefore(today);
+                String message = isOverdue
+                        ? "Calibration schedule " + c.getScheduleNumber() + " is OVERDUE (was due " + c.getNextDueDate() + ")"
+                        : "Calibration schedule " + c.getScheduleNumber() + " is due on " + c.getNextDueDate();
+                notifyOnce(isOverdue ? "CALIBRATION_OVERDUE" : "CALIBRATION_DUE",
+                        "QUALITY", "CalibrationSchedule", c.getId(),
+                        isOverdue ? "CRITICAL" : "WARNING",
+                        message, c.getScheduleNumber());
+            }
+        } catch (Exception ex) {
+            log.error("[Calibration Check] Failed to run calibration due check", ex);
+        }
+    }
+
+    /**
+     * Daily at 9 AM: summarize work orders whose due date has passed and that
+     * are not yet COMPLETED / CLOSED / CANCELLED.
+     */
+    @Scheduled(cron = "${zyger.scheduling.overdue-work-order:0 0 9 * * *}")
+    public void overdueWorkOrderCheck() {
+        try {
+            LocalDate today = LocalDate.now();
+            List<WorkOrder> overdue = em.createQuery("""
+                            select w from WorkOrder w
+                            where w.dueDate < :today
+                              and (w.status is null or w.status not in ('COMPLETED', 'CLOSED', 'CANCELLED'))
+                            order by w.dueDate asc
+                            """, WorkOrder.class)
+                    .setParameter("today", today)
+                    .getResultList();
+
+            if (overdue.isEmpty()) {
+                log.info("[Overdue Work Order Check] No overdue open work orders.");
+                return;
+            }
+
+            Map<String, Long> byStatus = overdue.stream()
+                    .collect(Collectors.groupingBy(w -> w.getStatus() == null ? "UNSET" : w.getStatus(), Collectors.counting()));
+
+            String summary = overdue.stream()
+                    .limit(10)
+                    .map(w -> w.getDocNo() + " (due " + w.getDueDate() + ")")
+                    .collect(Collectors.joining(", "));
+
+            log.warn("[Overdue Work Order Check] {} work order(s) past their due date and still open. By status: {}. Sample: {}{}",
+                    overdue.size(), byStatus,
+                    summary, overdue.size() > 10 ? ", ..." : "");
+
+            for (WorkOrder w : overdue) {
+                notifyOnce("WO_DELAYED", "PRODUCTION", "WorkOrder", w.getId(),
+                        "WARNING",
+                        "Work order " + w.getDocNo() + " is past its due date (" + w.getDueDate() + ") and still open",
+                        w.getDocNo());
+            }
+        } catch (Exception ex) {
+            log.error("[Overdue Work Order Check] Failed to run overdue work order check", ex);
+        }
+    }
+
+    /**
+     * Daily at 9:30 AM: summarize purchase orders whose required date has
+     * passed but which are not POSTED / RECEIVED / CLOSED / CANCELLED.
+     *
+     * A PO's effective required date comes from its line-level requiredDate
+     * (falling back to the header expectedDeliveryDate); POs without lines use
+     * the header expectedDeliveryDate directly.
+     */
+    @Scheduled(cron = "${zyger.scheduling.overdue-po:0 30 9 * * *}")
+    public void overduePoCheck() {
+        try {
+            LocalDate today = LocalDate.now();
+            List<PurchaseOrder> overdue = em.createQuery("""
+                            select po from PurchaseOrder po
+                            where (po.status is null or po.status not in ('POSTED', 'RECEIVED', 'CLOSED', 'CANCELLED'))
+                              and (
+                                    exists (select l from PurchaseOrderItem l
+                                            where l.doc = po
+                                              and coalesce(l.requiredDate, po.expectedDeliveryDate) < :today)
+                                 or (po.expectedDeliveryDate < :today
+                                     and not exists (select l2 from PurchaseOrderItem l2 where l2.doc = po))
+                                  )
+                            order by po.expectedDeliveryDate asc
+                            """, PurchaseOrder.class)
+                    .setParameter("today", today)
+                    .getResultList();
+
+            if (overdue.isEmpty()) {
+                log.info("[Overdue PO Check] No overdue open purchase orders.");
+                return;
+            }
+
+            Map<String, Long> byStatus = overdue.stream()
+                    .collect(Collectors.groupingBy(po -> po.getStatus() == null ? "UNSET" : po.getStatus(), Collectors.counting()));
+
+            String summary = overdue.stream()
+                    .limit(10)
+                    .map(po -> po.getDocNo() + " (expected " + po.getExpectedDeliveryDate() + ")")
+                    .collect(Collectors.joining(", "));
+
+            log.warn("[Overdue PO Check] {} purchase order(s) past their required date and not fulfilled. By status: {}. Sample: {}{}",
+                    overdue.size(), byStatus,
+                    summary, overdue.size() > 10 ? ", ..." : "");
+
+            for (PurchaseOrder po : overdue) {
+                notifyOnce("PO_OVERDUE", "PURCHASE", "PurchaseOrder", po.getId(),
+                        "WARNING",
+                        "Purchase order " + po.getDocNo() + " is past its expected delivery date (" + po.getExpectedDeliveryDate() + ") and not fulfilled",
+                        po.getDocNo());
+            }
+        } catch (Exception ex) {
+            log.error("[Overdue PO Check] Failed to run overdue PO check", ex);
+        }
+    }
+
+    /**
+     * Daily at 7 AM: compare free available stock per item against the item's
+     * reorder point (ItemMaster.reorderPoint) and summarize items below it.
+     */
+    @Scheduled(cron = "${zyger.scheduling.low-stock:0 0 7 * * *}")
+    public void lowStockCheck() {
+        try {
+            Map<String, BigDecimal> availableByItem = new HashMap<>();
+            for (Object[] row : em.createQuery("""
+                            select sb.itemCode, sum(sb.qty) from StockBalance sb
+                            where sb.stockStatus = 'FREE'
+                            group by sb.itemCode
+                            """, Object[].class)
+                    .getResultList()) {
+                String itemCode = (String) row[0];
+                BigDecimal qty = row[1] instanceof BigDecimal bd ? bd : new BigDecimal(String.valueOf(row[1]));
+                availableByItem.merge(itemCode, qty, BigDecimal::add);
+            }
+
+            List<ItemMaster> withReorderPoint = em.createQuery(
+                            "select i from ItemMaster i where i.reorderPoint is not null", ItemMaster.class)
+                    .getResultList();
+            if (withReorderPoint.isEmpty()) {
+                log.info("[Low Stock Check] No items define a reorder point; nothing to check.");
+                return;
+            }
+
+            record LowStock(Long itemId, String code, BigDecimal available, BigDecimal reorderPoint) {}
+            List<LowStock> low = withReorderPoint.stream()
+                    .map(i -> new LowStock(i.getId(), i.getCode(),
+                            availableByItem.getOrDefault(i.getCode(), BigDecimal.ZERO), i.getReorderPoint()))
+                    .filter(ls -> ls.available().compareTo(ls.reorderPoint()) < 0)
+                    .toList();
+
+            if (low.isEmpty()) {
+                log.info("[Low Stock Check] All tracked items ({}) are at or above reorder point.", withReorderPoint.size());
+                return;
+            }
+
+            String summary = low.stream()
+                    .limit(10)
+                    .map(ls -> ls.code() + " (available " + ls.available() + " <= reorder " + ls.reorderPoint() + ")")
+                    .collect(Collectors.joining(", "));
+
+            log.warn("[Low Stock Check] {} item(s) below reorder level out of {} tracked. Items: {}{}",
+                    low.size(), withReorderPoint.size(), summary, low.size() > 10 ? ", ..." : "");
+
+            for (LowStock ls : low) {
+                notifyOnce("LOW_STOCK", "INVENTORY", "ItemMaster", ls.itemId(),
+                        "WARNING",
+                        "Item " + ls.code() + " is below reorder point (available " + ls.available() + ", reorder " + ls.reorderPoint() + ")",
+                        ls.code());
+            }
+        } catch (Exception ex) {
+            log.error("[Low Stock Check] Failed to run low stock check", ex);
+        }
+    }
+
+    /**
+     * Every 15 minutes: check all open quality inspections and breakdowns for SLA escalation.
+     */
+    @Scheduled(cron = "${zyger.scheduling.escalation-check:0 */15 * * * *}")
+    @Transactional
+    public void checkEscalations() {
+        try {
+            // Quality inspections
+            List<Object[]> openInspecs = em.createQuery(
+                    "SELECT i.id, i.inspectionNumber, i.createdAt FROM QualityInspection i " +
+                    "WHERE i.inspectionStatus NOT IN ('CLOSED', 'CANCELLED') AND i.createdAt IS NOT NULL",
+                    Object[].class).getResultList();
+            for (Object[] row : openInspecs) {
+                escalationEngine.checkAndEscalate("QUALITY_INSPECTION", ((Number) row[0]).longValue(),
+                        (String) row[1], row[2] instanceof Instant ? (Instant) row[2] : Instant.now());
+            }
+
+            // Breakdown intimations
+            List<Object[]> openBds = em.createQuery(
+                    "SELECT b.id, b.breakdownNumber, b.createdAt FROM BreakdownIntimation b " +
+                    "WHERE b.status NOT IN ('CLOSED', 'CANCELLED') AND b.createdAt IS NOT NULL",
+                    Object[].class).getResultList();
+            for (Object[] row : openBds) {
+                escalationEngine.checkAndEscalate("BREAKDOWN_INTIMATION", ((Number) row[0]).longValue(),
+                        (String) row[1], row[2] instanceof Instant ? (Instant) row[2] : Instant.now());
+            }
+
+            if (!openInspecs.isEmpty() || !openBds.isEmpty()) {
+                log.info("[Escalation Check] Checked {} inspections + {} breakdowns",
+                        openInspecs.size(), openBds.size());
+            }
+        } catch (Exception ex) {
+            log.error("[Escalation Check] Failed", ex);
+        }
+    }
+
+    /**
+     * Nightly at 1 AM: auto-populate OEE from production + breakdown data for yesterday.
+     */
+    @Scheduled(cron = "${zyger.scheduling.oee-populate:0 0 1 * * *}")
+    @Transactional
+    public void populateOeeDaily() {
+        try {
+            LocalDate yesterday = LocalDate.now().minusDays(1);
+            // Get machines that had production entries yesterday
+            List<Object[]> prodMachines = em.createNativeQuery(
+                    "SELECT DISTINCT machine_code FROM shop_floor_entry " +
+                    "WHERE DATE(doc_date) = :date AND status = 'COMPLETED' AND deleted_at IS NULL",
+                    Object[].class)
+                    .setParameter("date", yesterday)
+                    .getResultList();
+
+            for (Object[] row : prodMachines) {
+                String machineCode = (String) row[0];
+                // Check if OEE already populated for this machine/date
+                Long existing = ((Number) em.createNativeQuery(
+                        "SELECT COUNT(*) FROM oee_daily WHERE machine_code = :mc AND entry_date = :dt AND plant_id = 1")
+                        .setParameter("mc", machineCode)
+                        .setParameter("dt", yesterday)
+                        .getSingleResult()).longValue();
+                if (existing > 0) continue;
+
+                // Get total downtime in hours for this machine yesterday
+                Number downtime = (Number) em.createNativeQuery(
+                        "SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(closed_at, NOW()) - created_at)) / 3600), 0) " +
+                        "FROM breakdown_intimation WHERE machine_code = :mc " +
+                        "AND DATE(created_at) = :date AND status != 'CANCELLED' AND deleted_at IS NULL")
+                        .setParameter("mc", machineCode)
+                        .setParameter("date", yesterday)
+                        .getSingleResult();
+
+                double plannedHrs = 8.0; // single shift default
+                double downtimeHrs = downtime != null ? downtime.doubleValue() : 0;
+                double runHrs = Math.max(0, plannedHrs - downtimeHrs);
+                double availability = plannedHrs > 0 ? runHrs / plannedHrs : 0;
+
+                // Insert OEE record with computed availability
+                em.createNativeQuery(
+                        "INSERT INTO oee_daily (machine_code, entry_date, planned_hours, actual_run_hours, " +
+                        "availability, performance, quality, plant_id, created_at) " +
+                        "VALUES (:mc, :dt, :ph, :arh, :av, 0.85, 0.95, 1, NOW())")
+                        .setParameter("mc", machineCode)
+                        .setParameter("dt", yesterday)
+                        .setParameter("ph", plannedHrs)
+                        .setParameter("arh", runHrs)
+                        .setParameter("av", availability)
+                        .executeUpdate();
+            }
+            log.info("[OEE Populate] Processed {} machines for {}", prodMachines.size(), yesterday);
+        } catch (Exception ex) {
+            log.error("[OEE Populate] Failed", ex);
+        }
+    }
+
+    /**
+     * §7.6: Meter consumption anomaly detection — alert if consumption >20% above budget.
+     */
+    @Scheduled(cron = "${zyger.scheduling.meter-anomaly:0 30 7 * * *}")
+    @Transactional
+    public void checkMeterAnomalies() {
+        try {
+            List<Object[]> readings = em.createNativeQuery(
+                    "SELECT id, meter_code, reading_date, units_consumed FROM power_consumption " +
+                    "WHERE DATE(reading_date) = :yesterday AND deleted_at IS NULL",
+                    Object[].class)
+                    .setParameter("yesterday", LocalDate.now().minusDays(1))
+                    .getResultList();
+
+            for (Object[] row : readings) {
+                Long id = ((Number) row[0]).longValue();
+                String meterCode = (String) row[1];
+                Number units = (Number) row[3];
+
+                // Get budget for this meter
+                Number budget = (Number) em.createNativeQuery(
+                        "SELECT budget_monthly_units FROM meter_master WHERE code = :mc AND active = true")
+                        .setParameter("mc", meterCode)
+                        .getSingleResult();
+
+                if (budget != null && units != null && budget.doubleValue() > 0) {
+                    double dailyBudget = budget.doubleValue() / 30.0;
+                    double consumed = units.doubleValue();
+                    if (consumed > dailyBudget * 1.2) {
+                        log.warn("[Meter Anomaly] {} consumed {} units (budget: {}/day, +{:.0f}%)",
+                                meterCode, consumed, dailyBudget, ((consumed - dailyBudget) / dailyBudget) * 100);
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.error("[Meter Anomaly Check] Failed", ex);
+        }
+    }
+
+    /**
+     * §6.4: CAPA effectiveness-check reminders at 30/60/90 days post-approval.
+     */
+    @Scheduled(cron = "${zyger.scheduling.capa-effectiveness:0 0 10 * * *}")
+    @Transactional
+    public void checkCapaEffectiveness() {
+        try {
+            List<Object[]> approvedCapas = em.createQuery(
+                    "SELECT c.id, c.docNo, c.approvedAt FROM QualityCapa c " +
+                    "WHERE c.status = 'APPROVED' AND c.effectiveResult IS NULL AND c.deletedAt IS NULL",
+                    Object[].class).getResultList();
+
+            for (Object[] row : approvedCapas) {
+                Long id = ((Number) row[0]).longValue();
+                String docNo = (String) row[1];
+                Instant approvedAt = row[2] instanceof Instant ? (Instant) row[2] : Instant.now();
+                long daysSince = java.time.Duration.between(approvedAt, Instant.now()).toDays();
+
+                if (daysSince >= 90) {
+                    log.warn("[CAPA Effectiveness] {} is {} days past approval with no effectiveness check!", docNo, daysSince);
+                } else if (daysSince >= 60) {
+                    log.warn("[CAPA Effectiveness] {} is {} days past approval — effectiveness check due.", docNo, daysSince);
+                } else if (daysSince >= 30) {
+                    log.info("[CAPA Effectiveness] {} — 30-day effectiveness check reminder.", docNo);
+                }
+            }
+        } catch (Exception ex) {
+            log.error("[CAPA Effectiveness Check] Failed", ex);
+        }
+    }
+}

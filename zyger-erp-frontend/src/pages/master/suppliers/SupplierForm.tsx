@@ -29,6 +29,17 @@ export default function SupplierForm({ customerId, viewOnly = false, onBack, onS
   const [loading, setLoading] = useState(false);
   const [itemsSupplied, setItemsSupplied] = useState<SupplierItemSupplied[]>([]);
 
+  const openNew = async () => {
+    setForm(defaultForm());
+    setEditId(null);
+    try {
+      const { data } = await apiClient.get('/master/parties/next-code?kind=SUPPLIER');
+      setForm((c) => ({ ...c, code: data.code }));
+    } catch {
+      setForm((c) => ({ ...c, code: 'SUP-0003' }));
+    }
+  };
+
   useEffect(() => {
     if (!customerId) {
       setForm(defaultForm());
@@ -49,17 +60,6 @@ export default function SupplierForm({ customerId, viewOnly = false, onBack, onS
       onBack();
     }).finally(() => setLoading(false));
   }, [customerId]);
-
-  const openNew = async () => {
-    setForm(defaultForm());
-    setEditId(null);
-    try {
-      const { data } = await apiClient.get('/master/parties/next-code?kind=SUPPLIER');
-      setForm((c) => ({ ...c, code: data.code }));
-    } catch {
-      setForm((c) => ({ ...c, code: 'SUP-0003' }));
-    }
-  };
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
 

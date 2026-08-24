@@ -2,8 +2,10 @@ package in.zygertechnology.zygererp.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity @Table(name = "item_group")
+@EntityListeners(AuditEntityListener.class)
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class ItemGroup {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;

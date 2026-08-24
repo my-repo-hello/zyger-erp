@@ -2,9 +2,12 @@ package in.zygertechnology.zygererp.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import java.math.BigDecimal;
 
-@Entity @Table(name = "work_center") @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@Entity @Table(name = "work_center")
+@EntityListeners(AuditEntityListener.class)
+@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class WorkCenter {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
     @Version Long version;

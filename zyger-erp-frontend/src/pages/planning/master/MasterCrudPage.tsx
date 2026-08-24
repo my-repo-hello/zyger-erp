@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { planningApi } from '../../../services/planning-api';
+import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
@@ -22,6 +23,13 @@ export default function MasterCrudPage({ title, subtitle, apiMethod, fields }: M
   const [deleteTarget, setDeleteTarget] = useState<MasterRow | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const getResourcePath = () => {
+    return apiMethod === 'getWorkCenters' ? 'work-centers'
+      : apiMethod === 'getMachines' ? 'machines'
+      : apiMethod === 'getOperations' ? 'operations'
+      : 'shifts';
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -31,42 +39,33 @@ export default function MasterCrudPage({ title, subtitle, apiMethod, fields }: M
     setLoading(false);
   };
 
-  const getResourcePath = () => {
-    return apiMethod === 'getWorkCenters' ? 'work-centers'
-      : apiMethod === 'getMachines' ? 'machines'
-      : apiMethod === 'getOperations' ? 'operations'
-      : 'shifts';
-  };
-
   const openNew = async () => {
     setForm({});
     setEditId(null);
     try {
       const path = getResourcePath();
-      const res = await fetch(`/api/master/${path}/next-code`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.code) setForm({ code: data.code });
-      }
+      const { data } = await apiClient.get(`/master/${path}/next-code`);
+      if (data.code) setForm({ code: data.code });
     } catch { /* fallback */ }
   };
 
   useEffect(() => { load(); openNew(); }, []);
 
   const save = async () => {
-    if (!String(form.code ?? '').trim()) { toast('Code is required.', 'error'); return; }
+    for (const f of fields) {
+      if (f.required && !String(form[f.key] ?? '').trim()) {
+        toast(`${f.label} is required.`, 'error');
+        return;
+      }
+    }
     setBusy(true);
     try {
       const path = getResourcePath();
       if (editId) {
-        await fetch(`/api/master/${path}/${editId}`, {
-          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
-        });
+        await apiClient.put(`/master/${path}/${editId}`, form);
         toast(`${title} updated.`);
       } else {
-        await fetch(`/api/master/${path}`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
-        });
+        await apiClient.post(`/master/${path}`, form);
         toast(`${title} created.`);
       }
       openNew(); load();
@@ -74,12 +73,12 @@ export default function MasterCrudPage({ title, subtitle, apiMethod, fields }: M
     setBusy(false);
   };
 
-
   const del = async () => {
     if (!deleteTarget) return;
     setBusy(true);
     try {
-      await fetch(`/api/master/${apiMethod === 'getWorkCenters' ? 'work-centers' : apiMethod === 'getMachines' ? 'machines' : apiMethod === 'getOperations' ? 'operations' : 'shifts'}/${deleteTarget.id}`, { method: 'DELETE' });
+      const path = getResourcePath();
+      await apiClient.delete(`/master/${path}/${deleteTarget.id}`);
       toast(`${title} deleted.`);
       setDeleteTarget(null); load();
     } catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); }

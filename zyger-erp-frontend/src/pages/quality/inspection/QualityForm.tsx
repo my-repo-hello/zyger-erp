@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../../../contexts/AuthContext';
 import apiClient from '../../../api/axiosClient';
 import {
   useQualityInspection,
@@ -8,6 +9,9 @@ import {
 } from '../../../hooks/useQuality';
 import { useQualityNcrCreate } from '../../../hooks/useQualityNcr';
 import { qualityApi } from '../../../services/quality-api';
+import inspectionPlanApi from '../../../services/inspectionPlanApi';
+import DynamicFormRenderer from '../../../components/common/DynamicFormRenderer';
+import type { InspectionCharacteristic } from '../../../components/common/DynamicFormRenderer';
 import type {
   CharacteristicLinePayload,
   InspectionLineDto,
@@ -19,8 +23,11 @@ import { getApiErrorMessage } from '../../../utils/apiError';
 import { useToast } from '../../../contexts/ToastContext';
 import { masterService } from '../../../services/masterService';
 import { lookupDocumentByNumber } from '../../../utils/documentLookup';
-import StatusBadge from '../../../components/common/StatusBadge';
+import WorkflowStatusStepper from '../../../components/common/WorkflowStatusStepper';
+import AttachmentsDrawer from '../../../components/common/AttachmentsDrawer';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
+import { printDocLabel } from '../../../utils/barcode';
 
 const INSPECTION_TYPES: InspectionType[] = ['IQC', 'LO', 'JOMIN', 'FAI', 'IPQC', 'LINE', 'LAST_OFF', 'FINAL'];
 
@@ -33,6 +40,64 @@ const TYPE_LABELS: Record<InspectionType, string> = {
   LINE: 'Line',
   LAST_OFF: 'Last Off',
   FINAL: 'Final',
+};
+
+type DraftLineTemplate = Omit<DraftLine, 'actualValue'>;
+
+const TYPE_TEMPLATES: Record<InspectionType, DraftLineTemplate[]> = {
+  IQC: [
+    { characteristicCode: 'RM_DIM_OD', characteristicName: 'Raw Material OD / Thickness Check', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'RM_DIM_LEN', characteristicName: 'Raw Material Length Check', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'MAT_GRADE', characteristicName: 'Material Grade & Spec Verification', uom: 'SPEC', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'MTC_COC', characteristicName: 'Mill Test Certificate (MTC) / CoC Verified', uom: 'DOC', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'HEAT_NO', characteristicName: 'Heat Number Traceability & Stamping', uom: 'CHK', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'SURFACE_RUST', characteristicName: 'Visual Surface Defect / Rust / Bending Check', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'HARDNESS', characteristicName: 'Material Hardness Check (HRC/BHN)', uom: 'HRC', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+  ],
+  FAI: [
+    { characteristicCode: 'FAI_DIM_1', characteristicName: 'First Article Dimensional Check 1', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FAI_DIM_2', characteristicName: 'First Article Dimensional Check 2', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FAI_DIM_3', characteristicName: 'First Article Dimensional Check 3', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FAI_PROFILE', characteristicName: 'Profile / Form Check', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FAI_SURFACE', characteristicName: 'Surface Finish (Ra)', uom: 'Ra', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FAI_HARDNESS', characteristicName: 'Hardness (HRC/BHN)', uom: 'HRC', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'FAI_VISUAL', characteristicName: 'Visual / Cosmetic Inspection', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'FAI_COC', characteristicName: 'Material Certificate Verified', uom: 'DOC', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+  ],
+  IPQC: [
+    { characteristicCode: 'IPQC_DIM_1', characteristicName: 'In-Process Dimensional Check 1', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'IPQC_DIM_2', characteristicName: 'In-Process Dimensional Check 2', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'IPQC_SURFACE', characteristicName: 'Surface Finish Check', uom: 'Ra', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'IPQC_VISUAL', characteristicName: 'Visual / Cosmetic Check', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+  ],
+  LINE: [
+    { characteristicCode: 'LINE_DIM_1', characteristicName: 'Line Dimensional Check 1', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'LINE_DIM_2', characteristicName: 'Line Dimensional Check 2', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'LINE_VISUAL', characteristicName: 'Visual / Cosmetic Check', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+  ],
+  LAST_OFF: [
+    { characteristicCode: 'LO_DIM_1', characteristicName: 'Last Off Dimensional Check 1', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'LO_DIM_2', characteristicName: 'Last Off Dimensional Check 2', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'LO_SURFACE', characteristicName: 'Surface Finish (Ra)', uom: 'Ra', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'LO_VISUAL', characteristicName: 'Visual / Cosmetic Inspection', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+  ],
+  LO: [
+    { characteristicCode: 'LO_RECV_QTY', characteristicName: 'Received Quantity Verification', uom: 'QTY', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'LO_VISUAL', characteristicName: 'Visual Inspection', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+  ],
+  JOMIN: [
+    { characteristicCode: 'JOMIN_DIM_1', characteristicName: 'Job Order Dimensional Check 1', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'JOMIN_VISUAL', characteristicName: 'Visual / Cosmetic Check', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'JOMIN_COC', characteristicName: 'Subcontract Process Certificate Verified', uom: 'DOC', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+  ],
+  FINAL: [
+    { characteristicCode: 'FINAL_DIM_1', characteristicName: 'Final Dimensional Check 1', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FINAL_DIM_2', characteristicName: 'Final Dimensional Check 2', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FINAL_DIM_3', characteristicName: 'Final Dimensional Check 3', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FINAL_SURFACE', characteristicName: 'Surface Finish (Ra)', uom: 'Ra', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+    { characteristicCode: 'FINAL_VISUAL', characteristicName: 'Final Visual / Cosmetic Inspection', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: false, instrumentCode: '' },
+    { characteristicCode: 'FINAL_COC', characteristicName: 'Material & Process Certificates Verified', uom: 'DOC', nominalValue: '', lowerLimit: '', upperLimit: '', isCritical: true, instrumentCode: '' },
+  ],
 };
 
 interface DraftLine {
@@ -147,6 +212,7 @@ type DecisionModal =
 
 export default function QualityForm({ documentId, viewOnly = false, onBack, defaultInspectionType }: QualityFormProps) {
   const { toast } = useToast();
+  const { can } = useAuth();
 
   const isCreateMode = !documentId;
 
@@ -157,11 +223,13 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
   const measurementsMutation = useQualitySaveMeasurements();
   const workflowMutation = useQualityWorkflow();
   const ncrCreateMutation = useQualityNcrCreate();
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false);
 
   const [inwardOptions, setInwardOptions] = useState<Array<{ docNo: string; purchaseOrderNo?: string; supplier?: string; date?: string; items?: string }>>([]);
 
   const [nextNumber, setNextNumber] = useState('—');
-  const [header, setHeader] = useState({
+  const [header, setHeader] = useState(() => ({
     inspectionType: (defaultInspectionType ?? 'IQC') as InspectionType,
     referenceDocNo: '',
     purchaseOrderNumber: '',
@@ -172,7 +240,7 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
     mtcVerified: false,
     mtcNumber: '',
     ndtStatus: 'NA',
-    itemCode: `ITM-2026-${String(Math.floor(Math.random() * 9000) + 1000)}`,
+    itemCode: '',
     itemDescription: '',
     receivedQuantity: '',
     inspectionQuantity: '',
@@ -192,8 +260,9 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
     serialNumber: '',
     heatNumber: '',
     remarks: '',
-  });
+  }));
   const [draftLines, setDraftLines] = useState<DraftLine[]>([emptyDraftLine()]);
+  const [planCharacteristics, setPlanCharacteristics] = useState<InspectionCharacteristic[]>([]);
   const [decisionModal, setDecisionModal] = useState<DecisionModal | null>(null);
   const [ncrForm, setNcrForm] = useState({ defectCode: '', quantityAffected: '', severity: 'MAJOR' });
   const [initializedForId, setInitializedForId] = useState('');
@@ -258,19 +327,12 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
         supplierChallanNo: current.supplierChallanNo || doc.raw.supplierChallanNo || doc.raw.challanNo || '',
       }));
 
-      // Pre-seed default IQC characteristic inspection lines if only 1 blank line exists
-      if (header.inspectionType === 'IQC') {
+      // Pre-seed default characteristic inspection lines if only 1 blank line exists
+      const typeTemplates = TYPE_TEMPLATES[header.inspectionType as InspectionType];
+      if (typeTemplates && typeTemplates.length > 0) {
         setDraftLines((lines) => {
           if (lines.length <= 1 && (!lines[0]?.characteristicCode || lines[0]?.characteristicCode === '')) {
-            return [
-              { characteristicCode: 'RM_DIM_OD', characteristicName: 'Raw Material OD / Thickness Check', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
-              { characteristicCode: 'RM_DIM_LEN', characteristicName: 'Raw Material Length Check', uom: 'mm', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: false, instrumentCode: '' },
-              { characteristicCode: 'MAT_GRADE', characteristicName: 'Material Grade & Spec Verification', uom: 'SPEC', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
-              { characteristicCode: 'MTC_COC', characteristicName: 'Mill Test Certificate (MTC) / CoC Verified', uom: 'DOC', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
-              { characteristicCode: 'HEAT_NO', characteristicName: 'Heat Number Traceability & Stamping', uom: 'CHK', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: true, instrumentCode: '' },
-              { characteristicCode: 'SURFACE_RUST', characteristicName: 'Visual Surface Defect / Rust / Bending Check', uom: 'VIS', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: false, instrumentCode: '' },
-              { characteristicCode: 'HARDNESS', characteristicName: 'Material Hardness Check (HRC/BHN)', uom: 'HRC', nominalValue: '', lowerLimit: '', upperLimit: '', actualValue: '', isCritical: false, instrumentCode: '' },
-            ];
+            return typeTemplates.map((t) => ({ ...t, actualValue: '' }));
           }
           return lines;
         });
@@ -293,8 +355,69 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
   };
 
   useEffect(() => {
-    qualityApi.getNextNumber().then((result) => setNextNumber(result.nextNumber)).catch(() => setNextNumber('—'));
-  }, [isCreateMode]);
+    const typeParam = header.inspectionType ? `?inspectionType=${header.inspectionType}` : '';
+    qualityApi.getNextNumber(typeParam).then((result) => setNextNumber(result.nextNumber)).catch(() => setNextNumber('—'));
+  }, [isCreateMode, header.inspectionType]);
+
+  // Auto-load InspectionPlan characteristics when item code + type are set
+  useEffect(() => {
+    if (!isCreateMode || !header.itemCode.trim() || !header.inspectionType) {
+      setPlanCharacteristics([]);
+      return;
+    }
+    let cancelled = false;
+    inspectionPlanApi
+      .getByItemAndType(header.itemCode.trim(), header.inspectionType)
+      .then((plan) => {
+        if (cancelled || !plan || !plan.characteristics?.length) return;
+        setPlanCharacteristics(plan.characteristics);
+        // Auto-populate draft lines from plan if current lines are blank
+        setDraftLines((lines) => {
+          if (lines.length <= 1 && !lines[0]?.characteristicCode) {
+            return plan.characteristics.map((ch) => ({
+              balloonNo: ch.balloonNo || '',
+              characteristicCode: ch.characteristicCode,
+              characteristicName: ch.characteristicName,
+              uom: ch.uom || '',
+              nominalValue: String(ch.nominalValue ?? ''),
+              lowerLimit: String(ch.lowerLimit ?? ''),
+              upperLimit: String(ch.upperLimit ?? ''),
+              actualValue: '',
+              isCritical: ch.isCritical || false,
+              isMandatory: ch.isMandatory || false,
+              instrumentCode: '',
+              dataType: ch.dataType || 'NUMERIC',
+              specificationText: ch.specificationText || '',
+            }));
+          }
+          return lines;
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isCreateMode, header.itemCode, header.inspectionType]);
+
+  const [aqlResult, setAqlResult] = useState<{ sampleSize: number; acceptNumber: number; rejectNumber: number } | null>(null);
+
+  // §6.2: Auto-calculate AQL sample size when received quantity (lot size) changes
+  useEffect(() => {
+    if (!isCreateMode || !header.receivedQuantity) { setAqlResult(null); return; }
+    const lotSize = parseInt(String(header.receivedQuantity), 10);
+    if (isNaN(lotSize) || lotSize <= 0) return;
+    let cancelled = false;
+    apiClient.get('/master/aql-lookup', { params: { lotSize } })
+      .then(({ data }) => {
+        if (cancelled || !data?.found) { setAqlResult(null); return; }
+        setAqlResult({ sampleSize: data.sampleSize, acceptNumber: data.acceptNumber, rejectNumber: data.rejectNumber });
+        // Auto-fill inspection quantity if currently empty
+        setHeader((current) => ({
+          ...current,
+          inspectionQuantity: current.inspectionQuantity || String(data.sampleSize),
+        }));
+      })
+      .catch(() => { setAqlResult(null); });
+    return () => { cancelled = true; };
+  }, [isCreateMode, header.receivedQuantity]);
 
   useEffect(() => {
     if (!inspection || !documentId) {
@@ -348,6 +471,8 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
   }, [inspection, documentId, initializedForId]);
 
   const status: InspectionStatus = inspection?.inspectionStatus ?? 'DRAFT';
+  const allowedTransitions = (inspection?._allowedTransitions as string[]) ?? [];
+  const isTerminal = Boolean(inspection?._isTerminal);
   const measurementsEditable =
     !viewOnly && !isCreateMode && !['CLOSED', 'APPROVED', 'CANCELLED'].includes(status);
 
@@ -486,6 +611,19 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
     }
   };
 
+  const handleWorkflowAction = (act: string) => {
+    switch (act) {
+      case 'submit': runWorkflow('submit'); break;
+      case 'approve': runWorkflow('decide', undefined, 'PASS'); break;
+      case 'reject': runWorkflow('decide', undefined, 'REJECT'); break;
+      case 'hold': runWorkflow('decide', undefined, 'HOLD'); break;
+      case 'start': runWorkflow('start'); break;
+      case 'close': runWorkflow('close'); break;
+      case 'cancel': runWorkflow('cancel'); break;
+      case 'reopen': runWorkflow('reopen'); break;
+    }
+  };
+
   const handleCreateNcr = async () => {
     if (!documentId || !inspection) {
       return;
@@ -572,7 +710,27 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
               Header
             </h2>
 
-            {!isCreateMode && <StatusBadge status={status} />}
+            {!isCreateMode && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" className="btn btn-sm" title="Print Label" onClick={() => {
+                  printDocLabel(docNo, 'QUALITY_INSPECTION', `${header.inspectionType} - ${header.referenceDocNo || docNo}`);
+                }}>
+                  <span className="material-symbols-rounded">qr_code_2</span>
+                </button>
+                <button type="button" className="btn btn-sm" title="Attachments" onClick={() => setAttachmentsOpen(true)}>
+                  <span className="material-symbols-rounded">attach_file</span>
+                </button>
+                <button type="button" className="btn btn-sm" title="Audit History" onClick={() => setAuditOpen(true)}>
+                  <span className="material-symbols-rounded">history</span> Audit
+                </button>
+                <WorkflowStatusStepper
+                  currentStatus={status}
+                  allowedTransitions={allowedTransitions}
+                  isTerminal={isTerminal}
+                  onAction={(act) => handleWorkflowAction(act)}
+                />
+              </div>
+            )}
           </div>
 
           <div className="fgrid">
@@ -603,6 +761,25 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
                 ))}
               </select>
             </label>
+
+            {isCreateMode && (
+              <label className="fld">
+                <span>&nbsp;</span>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => {
+                    const tpl = TYPE_TEMPLATES[header.inspectionType as InspectionType];
+                    if (tpl && tpl.length > 0) {
+                      setDraftLines(tpl.map((t) => ({ ...t, actualValue: '' })));
+                      toast(`Loaded ${TYPE_LABELS[header.inspectionType as InspectionType]} template (${tpl.length} characteristics)`);
+                    }
+                  }}
+                >
+                  <span className="material-symbols-rounded">content_copy</span> Load Template
+                </button>
+              </label>
+            )}
 
             <label className="fld">
               <span>Ref Doc No (GRN / Inward / JO / PO)</span>
@@ -795,6 +972,11 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
                   setHeader((current) => ({ ...current, inspectionQuantity: event.target.value }))
                 }
               />
+              {aqlResult && (
+                <span className="text-xs text-blue-600 mt-0.5">
+                  AQL sample: {aqlResult.sampleSize} | Accept: {aqlResult.acceptNumber} | Reject: {aqlResult.rejectNumber}
+                </span>
+              )}
             </label>
 
             <label className="fld">
@@ -999,6 +1181,104 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
           </div>
         </div>
 
+        {/* Dynamic characteristics grid — plan-driven or manual */}
+        <div className="panel">
+          <div className="panel-h">
+            <h2>
+              <span className="material-symbols-rounded">checklist</span>
+              Characteristics
+              {planCharacteristics.length > 0 && (
+                <span style={{ fontSize: 12, color: '#a6e3a1', marginLeft: 8, fontWeight: 400 }}>
+                  (from Inspection Plan: {planCharacteristics.length} loaded)
+                </span>
+              )}
+            </h2>
+          </div>
+          <DynamicFormRenderer
+            characteristics={planCharacteristics.length > 0 ? planCharacteristics : draftLines}
+            draftLines={draftLines}
+            onUpdate={(idx, field, value) => {
+              setDraftLines((current) =>
+                current.map((line, i) => (i === idx ? { ...line, [field]: value } : line))
+              );
+            }}
+            onPaste={(rows) => {
+              setDraftLines((lines) => {
+                const updated = [...lines];
+                rows.forEach((row, ri) => {
+                  const idx = ri < updated.length ? ri : updated.length;
+                  if (idx >= updated.length) return;
+                  if (row[0]) updated[idx] = { ...updated[idx], actualValue: row[0] };
+                  if (row[1]) updated[idx] = { ...updated[idx], instrumentCode: row[1] };
+                });
+                return updated;
+              });
+            }}
+            readOnly={viewOnly}
+          />
+          {!viewOnly && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, padding: '0 4px' }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  setDraftLines((current) => [...current, emptyDraftLine()]);
+                }}
+              >
+                <span className="material-symbols-rounded">add</span> Add Line
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  const tpl = TYPE_TEMPLATES[header.inspectionType as InspectionType];
+                  if (tpl && tpl.length > 0) {
+                    setPlanCharacteristics([]);
+                    setDraftLines(tpl.map((t) => ({ ...t, actualValue: '' })));
+                    toast(`Loaded ${TYPE_LABELS[header.inspectionType as InspectionType]} template (${tpl.length} characteristics)`);
+                  }
+                }}
+              >
+                <span className="material-symbols-rounded">content_copy</span> Load Template
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={async () => {
+                  if (!header.itemCode.trim()) {
+                    toast('Enter item code first to load from plan.', 'error');
+                    return;
+                  }
+                  const plan = await inspectionPlanApi.getByItemAndType(header.itemCode.trim(), header.inspectionType);
+                  if (plan && plan.characteristics?.length) {
+                    setPlanCharacteristics(plan.characteristics);
+                    setDraftLines(plan.characteristics.map((ch) => ({
+                      balloonNo: ch.balloonNo || '',
+                      characteristicCode: ch.characteristicCode,
+                      characteristicName: ch.characteristicName,
+                      uom: ch.uom || '',
+                      nominalValue: String(ch.nominalValue ?? ''),
+                      lowerLimit: String(ch.lowerLimit ?? ''),
+                      upperLimit: String(ch.upperLimit ?? ''),
+                      actualValue: '',
+                      isCritical: ch.isCritical || false,
+                      isMandatory: ch.isMandatory || false,
+                      instrumentCode: '',
+                      dataType: ch.dataType || 'NUMERIC',
+                      specificationText: ch.specificationText || '',
+                    })));
+                    toast(`Loaded Inspection Plan: ${plan.characteristics.length} characteristics`);
+                  } else {
+                    toast('No Inspection Plan found for this item/type.', 'error');
+                  }
+                }}
+              >
+                <span className="material-symbols-rounded">auto_fix_high</span> Load from Plan
+              </button>
+            </div>
+          )}
+        </div>
+
         {status === 'FAIL' && !viewOnly && (
           <div className="panel">
             <div className="panel-h">
@@ -1102,15 +1382,39 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
                 )}
 
                 {measurementsEditable && (
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={handleSaveMeasurements}
-                    disabled={isBusy}
-                  >
-                    <span className="material-symbols-rounded">save</span>
-                    Save Measurements
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleSaveMeasurements}
+                      disabled={isBusy}
+                    >
+                      <span className="material-symbols-rounded">save</span>
+                      Save Measurements
+                    </button>
+                    <label className="btn" style={{ cursor: 'pointer' }}>
+                      <span className="material-symbols-rounded">upload_file</span>
+                      CSV Import
+                      <input
+                        type="file"
+                        accept=".csv,.txt"
+                        style={{ display: 'none' }}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file || !documentId) return;
+                          try {
+                            const text = await file.text();
+                            const result = await qualityApi.bulkImportMeasurements(documentId, text);
+                            toast(`Imported: ${result.matched} matched, ${result.unmatched} unmatched of ${result.totalRows} rows`);
+                            documentQuery.refetch();
+                          } catch (err) {
+                            toast(getApiErrorMessage(err, 'CSV import failed.'), 'error');
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </>
                 )}
 
                 {['DRAFT', 'IN_PROGRESS'].includes(status) && (
@@ -1125,7 +1429,7 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
                   </button>
                 )}
 
-                {status === 'SUBMITTED' && (
+                {status === 'SUBMITTED' && can('quality', 'Approve') && (
                   <>
                     <button
                       type="button"
@@ -1297,6 +1601,12 @@ export default function QualityForm({ documentId, viewOnly = false, onBack, defa
           }
         }}
       />
+
+      <AuditHistoryDrawer open={auditOpen} entityType="QualityInspection" entityId={documentId ?? undefined} onClose={() => setAuditOpen(false)} />
+
+      {attachmentsOpen && documentId && (
+        <AttachmentsDrawer ownerType="quality-inspection" ownerId={Number(documentId)} onClose={() => setAttachmentsOpen(false)} />
+      )}
     </>
   );
 }

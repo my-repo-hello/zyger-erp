@@ -4,9 +4,12 @@ import in.zygertechnology.zygererp.entity.*;
 import in.zygertechnology.zygererp.repo.*;
 import in.zygertechnology.zygererp.service.DocNumberService;
 import in.zygertechnology.zygererp.service.PrintService;
+import in.zygertechnology.zygererp.service.StockService;
 import in.zygertechnology.zygererp.repo.ItemRepository;
 import in.zygertechnology.zygererp.repo.MachineMasterRepository;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -24,6 +27,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
+@RequirePermission(module = "PRODUCTION", screen = "*", action = "VIEW")
 @RequiredArgsConstructor
 public class ProductionController {
 
@@ -44,6 +48,7 @@ public class ProductionController {
     private final ItemRepository items;
     private final MachineMasterRepository machines;
     private final PrintService printer;
+    @Lazy private final StockService stockService;
 
     private static String principalName(Principal p) { return p != null ? p.getName() : "system"; }
 
@@ -281,6 +286,14 @@ public class ProductionController {
                     // Allow completion but warn
                 }
 
+                // Overproduction check: total output must not exceed planned + 10% tolerance
+                BigDecimal plannedQty = jc.getPlannedQuantity() == null ? BigDecimal.ZERO : jc.getPlannedQuantity();
+                BigDecimal totalOutput = totalGood.add(totalRework);
+                BigDecimal tolerance = plannedQty.multiply(new BigDecimal("0.10"));
+                if (plannedQty.compareTo(BigDecimal.ZERO) > 0 && totalOutput.compareTo(plannedQty.add(tolerance)) > 0) {
+                    errors.add("Overproduction detected: completed " + totalOutput + " against planned " + plannedQty + " (max allowed: " + plannedQty.add(tolerance) + ")");
+                }
+
                 if (!errors.isEmpty()) {
                     result.put("success", false);
                     result.put("errors", errors);
@@ -291,6 +304,13 @@ public class ProductionController {
                 jc.setActualEndDate(Instant.now());
                 jc.setCompleteRemarks(note);
                 jc.setCompletionStatus("COMPLETE");
+
+                if (totalGood.compareTo(BigDecimal.ZERO) > 0 && jc.getPartCode() != null) {
+                    stockService.recordStockIn(
+                        jc.getJobCardNumber(), "job-card-complete", "FG_RECEIPT",
+                        jc.getPartCode(), "STORE", null, null,
+                        totalGood, LocalDate.now(), principalName(p), "FREE");
+                }
                 break;
             }
             case "close": {
@@ -472,11 +492,24 @@ public class ProductionController {
     public ProductionEntry createProductionEntry(@RequestBody ProductionEntry pe, Principal p) {
         pe.setId(null);
         pe.setEntryNumber(numbers.next("production-entry", "PE"));
-        if (pe.getProducedQuantity() == null) pe.setProducedQuantity(BigDecimal.ZERO);
-        if (pe.getGoodQuantity() == null) pe.setGoodQuantity(BigDecimal.ZERO);
-        if (pe.getReworkQuantity() == null) pe.setReworkQuantity(BigDecimal.ZERO);
-        if (pe.getRejectedQuantity() == null) pe.setRejectedQuantity(BigDecimal.ZERO);
-        if (pe.getScrapQuantity() == null) pe.setScrapQuantity(BigDecimal.ZERO);
+        BigDecimal good = pe.getGoodQuantity() != null ? pe.getGoodQuantity() : BigDecimal.ZERO;
+        BigDecimal rework = pe.getReworkQuantity() != null ? pe.getReworkQuantity() : BigDecimal.ZERO;
+        BigDecimal reject = pe.getRejectedQuantity() != null ? pe.getRejectedQuantity() : BigDecimal.ZERO;
+        BigDecimal scrap = pe.getScrapQuantity() != null ? pe.getScrapQuantity() : BigDecimal.ZERO;
+        BigDecimal sum = good.add(rework).add(reject).add(scrap);
+
+        if (pe.getProducedQuantity() == null || pe.getProducedQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+            pe.setProducedQuantity(sum);
+        } else if (sum.compareTo(pe.getProducedQuantity()) != 0 && sum.compareTo(BigDecimal.ZERO) > 0) {
+            throw new IllegalArgumentException("Production quantity reconciliation failed (GBL-16): Good (" + good +
+                    ") + Rework (" + rework + ") + Reject (" + reject + ") + Scrap (" + scrap +
+                    ") = " + sum + " does not equal Produced Quantity (" + pe.getProducedQuantity() + ")");
+        }
+        pe.setGoodQuantity(good);
+        pe.setReworkQuantity(rework);
+        pe.setRejectedQuantity(reject);
+        pe.setScrapQuantity(scrap);
+
         if (pe.getStatus() == null) pe.setStatus("DRAFT");
         if (pe.getQualityStatus() == null) pe.setQualityStatus("PENDING");
         pe.setCreatedBy(principalName(p));
@@ -492,8 +525,30 @@ public class ProductionController {
     @PutMapping("/api/v1/production/entries/{id}")
     public ProductionEntry updateProductionEntry(@PathVariable Long id, @RequestBody ProductionEntry pe, Principal p) {
         ProductionEntry e = productionEntries.findById(id).orElseThrow(() -> new RuntimeException("Production Entry not found"));
+        if ("COMPLETED".equals(e.getStatus()) || "CLOSED".equals(e.getStatus())) {
+            throw new RuntimeException("Cannot edit " + e.getStatus() + " production entries");
+        }
         pe.setId(id);
         pe.setEntryNumber(e.getEntryNumber());
+
+        BigDecimal good = pe.getGoodQuantity() != null ? pe.getGoodQuantity() : BigDecimal.ZERO;
+        BigDecimal rework = pe.getReworkQuantity() != null ? pe.getReworkQuantity() : BigDecimal.ZERO;
+        BigDecimal reject = pe.getRejectedQuantity() != null ? pe.getRejectedQuantity() : BigDecimal.ZERO;
+        BigDecimal scrap = pe.getScrapQuantity() != null ? pe.getScrapQuantity() : BigDecimal.ZERO;
+        BigDecimal sum = good.add(rework).add(reject).add(scrap);
+
+        if (pe.getProducedQuantity() == null || pe.getProducedQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+            pe.setProducedQuantity(sum);
+        } else if (sum.compareTo(pe.getProducedQuantity()) != 0 && sum.compareTo(BigDecimal.ZERO) > 0) {
+            throw new IllegalArgumentException("Production quantity reconciliation failed (GBL-16): Good (" + good +
+                    ") + Rework (" + rework + ") + Reject (" + reject + ") + Scrap (" + scrap +
+                    ") = " + sum + " does not equal Produced Quantity (" + pe.getProducedQuantity() + ")");
+        }
+        pe.setGoodQuantity(good);
+        pe.setReworkQuantity(rework);
+        pe.setRejectedQuantity(reject);
+        pe.setScrapQuantity(scrap);
+
         pe.setCreatedAt(e.getCreatedAt());
         pe.setCreatedBy(e.getCreatedBy());
         pe.setUpdatedAt(Instant.now());
@@ -509,10 +564,27 @@ public class ProductionController {
     }
 
     @PostMapping("/api/v1/production/entries/{id}/actions/{action}")
-    public ProductionEntry productionEntryAction(@PathVariable Long id, @PathVariable String action, Principal p) {
+    public ProductionEntry productionEntryAction(@PathVariable Long id, @PathVariable String action,
+                                                  @RequestBody(required = false) Map<String, String> body,
+                                                  Principal p) {
         ProductionEntry pe = productionEntries.findById(id).orElseThrow(() -> new RuntimeException("Production Entry not found"));
         switch (action.toLowerCase()) {
-            case "submit": pe.setStatus("SUBMITTED"); break;
+            case "submit": {
+                // Backdated entry check: entry dated before the job card start requires an explicit reason
+                if (pe.getProductionDate() != null && pe.getJobCardNumber() != null && !pe.getJobCardNumber().isBlank()) {
+                    JobCard jc = jobCards.findByJobCardNumber(pe.getJobCardNumber()).stream().findFirst().orElse(null);
+                    if (jc != null && jc.getActualStartDate() != null && pe.getProductionDate().isBefore(jc.getActualStartDate())) {
+                        String reason = body != null ? body.get("backdatedReason") : null;
+                        if (reason == null || reason.isBlank()) {
+                            throw new IllegalArgumentException("Backdated entry (entry date " + pe.getProductionDate() +
+                                    " is before job card start " + jc.getActualStartDate() +
+                                    ") requires a reason. Pass backdatedReason parameter.");
+                        }
+                    }
+                }
+                pe.setStatus("SUBMITTED");
+                break;
+            }
             case "approve": pe.setStatus("APPROVED"); break;
             case "reject": pe.setStatus("REJECTED"); break;
             case "cancel": pe.setStatus("CANCELLED"); break;
@@ -576,7 +648,22 @@ public class ProductionController {
     public ProductConversion conversionAction(@PathVariable Long id, @PathVariable String action, Principal p) {
         ProductConversion pc = productConversions.findById(id).orElseThrow(() -> new RuntimeException("Product Conversion not found"));
         switch (action.toLowerCase()) {
-            case "complete": pc.setStatus("COMPLETED"); break;
+            case "complete": {
+                if (pc.getInputQuantity() != null && pc.getInputQuantity().compareTo(BigDecimal.ZERO) > 0 && pc.getInputItemCode() != null) {
+                    stockService.recordStockOut(
+                        pc.getConversionNumber(), "product-conversion", "CONVERSION_OUT",
+                        pc.getInputItemCode(), pc.getSourceWarehouse(), pc.getInputBatchNumber(), null,
+                        pc.getInputQuantity(), LocalDate.now(), principalName(p));
+                }
+                if (pc.getOutputQuantity() != null && pc.getOutputQuantity().compareTo(BigDecimal.ZERO) > 0 && pc.getOutputItemCode() != null) {
+                    stockService.recordStockIn(
+                        pc.getConversionNumber(), "product-conversion", "CONVERSION_IN",
+                        pc.getOutputItemCode(), pc.getDestinationWarehouse(), pc.getOutputBatchNumber(), null,
+                        pc.getOutputQuantity(), LocalDate.now(), principalName(p), "FREE");
+                }
+                pc.setStatus("COMPLETED");
+                break;
+            }
             case "cancel": pc.setStatus("CANCELLED"); break;
             default: throw new RuntimeException("Unknown action: " + action);
         }
@@ -633,7 +720,20 @@ public class ProductionController {
         ProductionReturn pr = productionReturns.findById(id).orElseThrow(() -> new RuntimeException("Production Return not found"));
         switch (action.toLowerCase()) {
             case "verify": pr.setStatus("VERIFIED"); break;
-            case "receive": pr.setStatus("RECEIVED"); break;
+            case "receive": {
+                if (pr.getQuantity() != null && pr.getQuantity().compareTo(BigDecimal.ZERO) > 0 && pr.getItemCode() != null) {
+                    String stockStatus = "SCRAP".equalsIgnoreCase(pr.getCondition()) ? "SCRAP"
+                        : ("REWORK".equalsIgnoreCase(pr.getCondition()) || "QC_HOLD".equalsIgnoreCase(pr.getCondition())) ? "QC_HOLD"
+                        : "FREE";
+                    String loc = pr.getLocation() != null ? pr.getLocation() : (pr.getWarehouse() != null ? pr.getWarehouse() : "STORE");
+                    stockService.recordStockIn(
+                        pr.getReturnNumber(), "production-return", "RETURN_RECEIPT",
+                        pr.getItemCode(), loc, pr.getBatchNumber(), null,
+                        pr.getQuantity(), LocalDate.now(), principalName(p), stockStatus);
+                }
+                pr.setStatus("RECEIVED");
+                break;
+            }
             case "cancel": pr.setStatus("CANCELLED"); break;
             default: throw new RuntimeException("Unknown action: " + action);
         }
@@ -981,26 +1081,22 @@ public class ProductionController {
     public Map<String, Object> getProductionDashboard() {
         Map<String, Object> dash = new LinkedHashMap<>();
 
-        List<JobCard> allJC = jobCards.findAll();
-        dash.put("totalJobCards", allJC.size());
-        dash.put("draftJobCards", jobCards.findByStatus("DRAFT").size());
-        dash.put("releasedJobCards", jobCards.findByStatus("RELEASED").size());
-        dash.put("inProgressJobCards", jobCards.findByStatus("IN_PROCESS").size());
-        dash.put("onHoldJobCards", jobCards.findByStatus("ON_HOLD").size());
-        dash.put("completedJobCards", jobCards.findByStatus("COMPLETED").size());
-        dash.put("closedJobCards", jobCards.findByStatus("CLOSED").size());
+        dash.put("totalJobCards", jobCards.count());
+        dash.put("draftJobCards", jobCards.countByStatus("DRAFT"));
+        dash.put("releasedJobCards", jobCards.countByStatus("RELEASED"));
+        dash.put("inProgressJobCards", jobCards.countByStatus("IN_PROGRESS"));
+        dash.put("onHoldJobCards", jobCards.countByStatus("ON_HOLD"));
+        dash.put("completedJobCards", jobCards.countByStatus("COMPLETED"));
+        dash.put("closedJobCards", jobCards.countByStatus("CLOSED"));
 
         dash.put("totalProductionEntries", productionEntries.count());
-        dash.put("approvedEntries", productionEntries.findByStatus("APPROVED").size());
-        dash.put("pendingEntries", productionEntries.findByStatus("SUBMITTED").size());
+        dash.put("approvedEntries", productionEntries.countByStatus("APPROVED"));
+        dash.put("pendingEntries", productionEntries.countByStatus("SUBMITTED"));
         dash.put("qualityPending", productionEntries.findByStatus("APPROVED").stream()
             .filter(e -> "PENDING".equals(e.getQualityStatus()))
             .count());
 
-        BigDecimal totalProduced = allJC.stream()
-            .map(jc -> jc.getCompletedQuantity() == null ? BigDecimal.ZERO : jc.getCompletedQuantity())
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-        dash.put("totalProducedQuantity", totalProduced);
+        dash.put("totalProducedQuantity", jobCards.sumCompletedQuantity());
 
         dash.put("totalConversions", productConversions.count());
         dash.put("totalReturns", productionReturns.count());

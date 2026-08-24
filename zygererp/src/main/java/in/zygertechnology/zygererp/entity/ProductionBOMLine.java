@@ -24,8 +24,16 @@ public class ProductionBOMLine extends BaseLine implements LineEntity {
     @Column(name = "alternate_group", length = 60) String alternateGroup;
     @Column(name = "substitute_item", length = 60) String substituteItem;
     Integer priority;
+    @Column(name = "substitute_priority") Integer substitutePriority;
     String warehouse;
     @Column(name = "child_bom_id") Long childBomId;
+
+    @Column(name = "scrap_percent", precision = 5, scale = 2)
+    BigDecimal scrapPercent = BigDecimal.ZERO;
+    @Column(name = "component_type", length = 30)
+    String componentType = "RAW_MATERIAL";
+    @Column(name = "is_phantom")
+    Boolean isPhantom = false;
 
     @Override public BigDecimal getQty() { return quantityPer == null ? BigDecimal.ZERO : quantityPer; }
 }

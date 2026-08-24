@@ -7,6 +7,7 @@ import in.zygertechnology.zygererp.repo.LedgerRepository;
 import in.zygertechnology.zygererp.service.DocumentFacade;
 import in.zygertechnology.zygererp.service.ExportService;
 import in.zygertechnology.zygererp.service.StockService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -19,6 +20,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController @RequiredArgsConstructor
+@RequirePermission(module = "REPORTS", screen = "*", action = "VIEW")
 public class ReportController {
 
     private final DocumentFacade docs;

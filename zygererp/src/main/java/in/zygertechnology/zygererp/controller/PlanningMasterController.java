@@ -3,6 +3,7 @@ package in.zygertechnology.zygererp.controller;
 import in.zygertechnology.zygererp.entity.*;
 import in.zygertechnology.zygererp.repo.*;
 import in.zygertechnology.zygererp.service.DocNumberService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,6 +18,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
+@RequirePermission(module = "PLANNING", screen = "*", action = "VIEW")
 @RequiredArgsConstructor
 public class PlanningMasterController {
 
@@ -38,6 +40,7 @@ public class PlanningMasterController {
     private final WorkCenterRepository workCenters;
     private final MachineMasterRepository machines;
     private final DocNumberService numbers;
+    private final StockBalanceRepository stockBalances;
 
     private String principalName(Principal p) { return p != null ? p.getName() : "system"; }
 
@@ -132,21 +135,20 @@ public class PlanningMasterController {
         MaterialPlan plan = materialPlans.findById(id).orElseThrow(() -> new RuntimeException("Material Plan not found"));
         materialPlanLines.findByPlanId(id).forEach(l -> materialPlanLines.deleteById(l.getId()));
 
-        List<WorkOrder> activeWOs = workOrders.findByStatus("RELEASED");
+        List<WorkOrder> activeWOs = new ArrayList<>(workOrders.findByStatus("RELEASED"));
         activeWOs.addAll(workOrders.findByStatus("IN_PROCESS"));
 
+        Set<String> visitedItems = new HashSet<>();
         Map<String, BigDecimal> grossByItem = new LinkedHashMap<>();
+        Map<String, Integer> maxLevelByItem = new LinkedHashMap<>();
+        Map<String, String> sourceWoByItem = new LinkedHashMap<>();
 
         for (WorkOrder wo : activeWOs) {
             if (wo.getBomId() == null) continue;
             ProductionBOM bom = productionBoms.findById(wo.getBomId()).orElse(null);
             if (bom == null) continue;
             BigDecimal woQty = wo.getOrderQuantity() == null ? BigDecimal.ONE : wo.getOrderQuantity();
-            for (ProductionBOMLine bomLine : bom.getLines()) {
-                BigDecimal qtyPer = bomLine.getQuantityPer() == null ? BigDecimal.ONE : bomLine.getQuantityPer();
-                BigDecimal gross = woQty.multiply(qtyPer);
-                grossByItem.merge(bomLine.getComponentItemCode(), gross, BigDecimal::add);
-            }
+            explodeBom(bom, woQty, 0, grossByItem, maxLevelByItem, sourceWoByItem, wo.getWoNumber(), visitedItems, 5);
         }
 
         for (Map.Entry<String, BigDecimal> entry : grossByItem.entrySet()) {
@@ -155,7 +157,22 @@ public class PlanningMasterController {
             Optional<ItemMaster> itemOpt = items.findByCode(itemCode);
             BigDecimal safetyStock = itemOpt.map(ItemMaster::getSafetyStock).orElse(BigDecimal.ZERO);
             if (safetyStock == null) safetyStock = BigDecimal.ZERO;
-            BigDecimal net = gross.subtract(safetyStock).max(BigDecimal.ZERO);
+
+            BigDecimal onHand = stockBalances.sumAvailableByItem(itemCode, null);
+            if (onHand == null) onHand = BigDecimal.ZERO;
+
+            BigDecimal onOrder = activeWOs.stream()
+                .filter(wo -> wo.getItemCode() != null && wo.getItemCode().equals(itemCode))
+                .map(wo -> wo.getOrderQuantity() == null ? BigDecimal.ZERO : wo.getOrderQuantity())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal wip = grossByItem.entrySet().stream()
+                .filter(e -> e.getKey().equals(itemCode))
+                .map(Map.Entry::getValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            BigDecimal available = onHand.add(onOrder).add(wip);
+            BigDecimal net = gross.subtract(available).add(safetyStock).max(BigDecimal.ZERO);
 
             MaterialPlanLine line = new MaterialPlanLine();
             line.setPlan(plan);
@@ -165,15 +182,16 @@ public class PlanningMasterController {
                 line.setUom(item.getUom());
                 line.setLeadTimeDays(item.getLeadTimeDays());
             });
-            line.setBomLevel(0);
+            line.setBomLevel(maxLevelByItem.getOrDefault(itemCode, 0));
             line.setGrossRequirement(gross);
-            line.setOnHandStock(BigDecimal.ZERO);
-            line.setOnOrderQty(BigDecimal.ZERO);
-            line.setWipQty(BigDecimal.ZERO);
+            line.setOnHandStock(onHand);
+            line.setOnOrderQty(onOrder);
+            line.setWipQty(wip);
             line.setSafetyStock(safetyStock);
             line.setNetRequirement(net);
-            line.setRecommendedOrderQty(net);
-            line.setOrderType("PURCHASE");
+            line.setRecommendedOrderQty(net.max(BigDecimal.ZERO));
+            line.setSourceWoNumber(sourceWoByItem.getOrDefault(itemCode, ""));
+            line.setOrderType(hasActiveWoForItem(itemCode, activeWOs) ? "PRODUCTION" : "PURCHASE");
             line.setActionStatus("PENDING");
             materialPlanLines.save(line);
         }
@@ -181,6 +199,118 @@ public class PlanningMasterController {
         plan.setStatus("COMPLETE");
         plan.setUpdatedAt(Instant.now());
         return materialPlans.save(plan);
+    }
+
+    private void explodeBom(ProductionBOM bom, BigDecimal parentQty, int level,
+                           Map<String, BigDecimal> grossByItem, Map<String, Integer> maxLevelByItem,
+                           Map<String, String> sourceWoByItem, String woNumber,
+                           Set<String> visitedItems, int maxDepth) {
+        if (level > maxDepth) return;
+        for (ProductionBOMLine bomLine : bom.getLines()) {
+            BigDecimal qtyPer = bomLine.getQuantityPer() == null ? BigDecimal.ONE : bomLine.getQuantityPer();
+            BigDecimal scrapPct = bomLine.getScrapPercentage() == null ? BigDecimal.ZERO : bomLine.getScrapPercentage();
+            BigDecimal effectiveQtyPer = qtyPer.multiply(BigDecimal.ONE.add(scrapPct.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)));
+            BigDecimal gross = parentQty.multiply(effectiveQtyPer);
+
+            String compCode = bomLine.getComponentItemCode();
+            grossByItem.merge(compCode, gross, BigDecimal::add);
+            maxLevelByItem.merge(compCode, level, Math::max);
+            sourceWoByItem.putIfAbsent(compCode, woNumber);
+
+            if (bomLine.getChildBomId() != null && !visitedItems.contains(compCode)) {
+                visitedItems.add(compCode);
+                ProductionBOM childBom = productionBoms.findById(bomLine.getChildBomId()).orElse(null);
+                if (childBom != null) {
+                    explodeBom(childBom, gross, level + 1, grossByItem, maxLevelByItem,
+                              sourceWoByItem, woNumber, visitedItems, maxDepth);
+                }
+            }
+        }
+    }
+
+    private boolean hasActiveWoForItem(String itemCode, List<WorkOrder> activeWOs) {
+        return activeWOs.stream().anyMatch(wo -> itemCode.equals(wo.getItemCode()));
+    }
+
+    // ===========================
+    // ---- FG Possible ----------
+    // ===========================
+
+    @PostMapping("/api/v1/planning/fg-possible/check")
+    public Map<String, Object> checkFgPossible(@RequestBody Map<String, Object> body) {
+        String itemCode = (String) body.get("itemCode");
+        if (itemCode == null || itemCode.isBlank()) throw new RuntimeException("itemCode is required");
+
+        BigDecimal targetQty = body.containsKey("quantity") && body.get("quantity") != null
+            ? new BigDecimal(body.get("quantity").toString()) : null;
+
+        List<ProductionBOM> boms = productionBoms.findByItemCode(itemCode);
+        ProductionBOM bom = boms.stream()
+            .filter(b -> !"REJECTED".equals(b.getStatus()) && !"OBSOLETE".equals(b.getStatus()))
+            .findFirst()
+            .orElse(null);
+
+        if (bom == null) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("maxProducibleQty", BigDecimal.ZERO);
+            r.put("limitingComponent", "No BOM found");
+            r.put("isFeasible", false);
+            r.put("breakdown", List.of());
+            return r;
+        }
+
+        List<Map<String, Object>> breakdown = new ArrayList<>();
+        BigDecimal maxProducible = targetQty != null ? targetQty : null;
+        String limitingComponent = "None";
+
+        for (ProductionBOMLine line : bom.getLines()) {
+            String compCode = line.getComponentItemCode();
+            BigDecimal qtyPer = line.getQuantityPer() == null ? BigDecimal.ONE : line.getQuantityPer();
+
+            BigDecimal scrapPct = line.getScrapPercentage() == null ? BigDecimal.ZERO : line.getScrapPercentage();
+            BigDecimal effectiveQtyPer = qtyPer.multiply(BigDecimal.ONE.add(scrapPct.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)));
+
+            BigDecimal available = stockBalances.sumAvailableByItem(compCode, null);
+            if (available == null) available = BigDecimal.ZERO;
+
+            BigDecimal requiredForTarget = targetQty != null ? effectiveQtyPer.multiply(targetQty) : effectiveQtyPer;
+
+            String status = available.compareTo(requiredForTarget) >= 0 ? "OK" : "SHORT";
+            if ("SHORT".equals(status)) {
+                if (targetQty == null) {
+                    BigDecimal canProduce = effectiveQtyPer.compareTo(BigDecimal.ZERO) > 0
+                        ? available.divide(effectiveQtyPer, 0, RoundingMode.FLOOR) : BigDecimal.ZERO;
+                    if (maxProducible == null || canProduce.compareTo(maxProducible) < 0) {
+                        maxProducible = canProduce;
+                        limitingComponent = compCode;
+                    }
+                } else {
+                    maxProducible = BigDecimal.ZERO;
+                    limitingComponent = compCode;
+                }
+            }
+
+            Optional<ItemMaster> compItem = items.findByCode(compCode);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("componentCode", compCode);
+            row.put("componentDescription", compItem.map(ItemMaster::getDescription).orElse(""));
+            row.put("uom", compItem.map(ItemMaster::getUom).orElse(line.getUom() != null ? line.getUom() : ""));
+            row.put("requiredQty", requiredForTarget);
+            row.put("availableQty", available);
+            row.put("status", status);
+            breakdown.add(row);
+        }
+
+        if (maxProducible == null) maxProducible = BigDecimal.ZERO;
+        boolean feasible = maxProducible.compareTo(BigDecimal.ZERO) > 0
+            && (targetQty == null || maxProducible.compareTo(targetQty) >= 0);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("maxProducibleQty", maxProducible);
+        result.put("limitingComponent", limitingComponent);
+        result.put("isFeasible", feasible);
+        result.put("breakdown", breakdown);
+        return result;
     }
 
     // ===========================
@@ -414,18 +544,39 @@ public class PlanningMasterController {
         EngineeringChange ec = engineeringChanges.findById(id).orElseThrow(() -> new RuntimeException("Engineering Change not found"));
         String note = body != null ? body.getOrDefault("note", "") : "";
         switch (action.toLowerCase()) {
+            case "submit-ecr":
+                ec.setEcrStatus("SUBMITTED");
+                ec.setStatus("SUBMITTED");
+                break;
+            case "approve-ecr":
+                ec.setEcrStatus("APPROVED");
+                ec.setStatus("APPROVED");
+                ec.setApprovedBy(principalName(principal));
+                break;
+            case "reject-ecr":
+                ec.setEcrStatus("REJECTED");
+                ec.setStatus("REJECTED");
+                break;
             case "approve":
+                ec.setEcrStatus("APPROVED");
                 ec.setStatus("APPROVED");
                 ec.setApprovedBy(principalName(principal));
                 break;
             case "reject":
+                ec.setEcrStatus("REJECTED");
                 ec.setStatus("REJECTED");
                 break;
-            case "implement":
+            case "implement": {
+                if (!"APPROVED".equals(ec.getEcrStatus())) {
+                    throw new IllegalStateException("ECR must be APPROVED before ECO can be implemented. Current ECR status: " + ec.getEcrStatus());
+                }
+                ec.setEcoStatus("IMPLEMENTED");
                 ec.setStatus("IMPLEMENTED");
                 ec.setEffectiveDate(Instant.now());
                 break;
+            }
             case "close":
+                ec.setEcoStatus("CLOSED");
                 ec.setStatus("CLOSED");
                 break;
             default:

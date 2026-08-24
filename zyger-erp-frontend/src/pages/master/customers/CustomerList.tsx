@@ -3,6 +3,8 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
+import { exportToCsv } from '../../../utils/exportCsv';
 import type { Party } from './customerTypes';
 import { tryParseJson } from './customerTypes';
 
@@ -22,6 +24,8 @@ export default function CustomerList({ onAdd, onEdit }: Props) {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<Party | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditEntityId, setAuditEntityId] = useState<number | undefined>(undefined);
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
@@ -93,6 +97,12 @@ export default function CustomerList({ onAdd, onEdit }: Props) {
               style={{ width: '280px' }}
             />
             <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 600 }}>{total || filteredRows.length} records</span>
+            <button className="btn btn-sm" onClick={() => exportToCsv(filteredRows as unknown as Record<string, unknown>[], 'customers')} title="Export CSV">
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>download</span> CSV
+            </button>
+            <button className="btn btn-sm" onClick={() => { setAuditEntityId(undefined); setAuditOpen(true); }} title="Audit History">
+              <span className="material-symbols-rounded" style={{ fontSize: 16 }}>history</span>
+            </button>
           </div>
 
           <button type="button" className="btn btn-primary" onClick={onAdd}>
@@ -175,6 +185,8 @@ export default function CustomerList({ onAdd, onEdit }: Props) {
         onClose={() => setDeleteTarget(null)}
         onConfirm={del}
       />
+
+      <AuditHistoryDrawer open={auditOpen} entityType="Customer" entityId={auditEntityId} onClose={() => setAuditOpen(false)} />
     </>
   );
 }

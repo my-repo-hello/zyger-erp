@@ -3,8 +3,11 @@ package in.zygertechnology.zygererp.controller;
 import in.zygertechnology.zygererp.entity.*;
 import in.zygertechnology.zygererp.repo.*;
 import in.zygertechnology.zygererp.service.DocNumberService;
+import in.zygertechnology.zygererp.service.DocumentWorkflowEngine;
 import in.zygertechnology.zygererp.repo.MachineMasterRepository;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -18,6 +21,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
+@RequirePermission(module = "MAINTENANCE", screen = "*", action = "VIEW")
+@Slf4j
 @RequiredArgsConstructor
 public class MaintenanceController {
 
@@ -36,6 +41,8 @@ public class MaintenanceController {
 
     private final DocNumberService numbers;
     private final MachineMasterRepository machines;
+    private final DocumentWorkflowEngine workflowEngine;
+    private final in.zygertechnology.zygererp.service.SparePartStockService sparePartStockService;
 
     private String principalName(Principal p) { return p != null ? p.getName() : "system"; }
 
@@ -62,7 +69,36 @@ public class MaintenanceController {
     // ===========================
 
     @GetMapping("/api/v1/maintenance/breakdowns")
-    public List<BreakdownIntimation> listBreakdowns() { return breakdowns.findAll(); }
+    public List<Map<String, Object>> listBreakdowns() {
+        return breakdowns.findAll().stream().map(this::enrichBreakdown).toList();
+    }
+
+    private Map<String, Object> enrichBreakdown(BreakdownIntimation bd) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", bd.getId());
+        m.put("breakdownNumber", bd.getBreakdownNumber());
+        m.put("breakdownDate", bd.getBreakdownDate());
+        m.put("breakdownTime", bd.getBreakdownTime());
+        m.put("machineCode", bd.getMachineCode());
+        m.put("machineStatus", bd.getMachineStatus());
+        m.put("reportedBy", bd.getReportedBy());
+        m.put("operatorCode", bd.getOperatorCode());
+        m.put("shiftCode", bd.getShiftCode());
+        m.put("breakdownCategory", bd.getBreakdownCategory());
+        m.put("cncAlarmCode", bd.getCncAlarmCode());
+        m.put("problemDescription", bd.getProblemDescription());
+        m.put("productionImpact", bd.getProductionImpact());
+        m.put("priority", bd.getPriority());
+        m.put("assignedTo", bd.getAssignedTo());
+        m.put("diagnosis", bd.getDiagnosis());
+        m.put("status", bd.getStatus());
+        m.put("remarks", bd.getRemarks());
+        m.put("createdAt", bd.getCreatedAt());
+        if (bd.getStatus() != null) {
+            workflowEngine.enrich("BREAKDOWN_INTIMATION", bd.getStatus(), m);
+        }
+        return m;
+    }
 
     @PostMapping("/api/v1/maintenance/breakdowns")
     public BreakdownIntimation createBreakdown(@RequestBody BreakdownIntimation bd, Principal principal) {
@@ -78,7 +114,30 @@ public class MaintenanceController {
             }
         }
         setCreated(bd, principalName(principal));
-        return breakdowns.save(bd);
+        breakdowns.save(bd);
+        if (isCriticalOrHigh(bd.getPriority())) updateMachineStatus(bd.getMachineCode(), "BREAKDOWN");
+        return bd;
+    }
+
+    private void updateMachineStatus(String machineCode, String newStatus) {
+        if (machineCode == null || machineCode.isBlank()) return;
+        machines.findByCode(machineCode).ifPresent(m -> {
+            m.setStatus(newStatus);
+            m.setUpdatedAt(Instant.now());
+            machines.save(m);
+        });
+    }
+
+    private static boolean isCriticalOrHigh(String priority) {
+        return "CRITICAL".equalsIgnoreCase(priority) || "HIGH".equalsIgnoreCase(priority);
+    }
+
+    private void releaseMachineFromBreakdown(Long breakdownId, String machineCode) {
+        if (machineCode == null || machineCode.isBlank()) return;
+        boolean othersStillOpen = breakdowns.findByMachineCode(machineCode).stream()
+                .anyMatch(b -> !Objects.equals(b.getId(), breakdownId)
+                        && !"CLOSED".equals(b.getStatus()) && !"CANCELLED".equals(b.getStatus()));
+        if (!othersStillOpen) updateMachineStatus(machineCode, "AVAILABLE");
     }
 
     @GetMapping("/api/v1/maintenance/breakdowns/{id}")
@@ -128,9 +187,11 @@ public class MaintenanceController {
                     return result;
                 }
                 bd.setStatus("CLOSED");
+                releaseMachineFromBreakdown(id, bd.getMachineCode());
                 break;
             case "cancel":
                 bd.setStatus("CANCELLED");
+                releaseMachineFromBreakdown(id, bd.getMachineCode());
                 break;
             default:
                 throw new RuntimeException("Unknown action: " + action);
@@ -164,6 +225,10 @@ public class MaintenanceController {
         if (r.getStatus() == null) r.setStatus("IN_PROGRESS");
         setCreated(r, principalName(principal));
         BreakdownRectification saved = rectifications.save(r);
+
+        // §7.3: Auto-post stock issues for linked spare parts
+        try { sparePartStockService.postRectificationStockIssues(saved.getId(), saved.getRectificationNumber(), saved.getMachineCode()); }
+        catch (Exception ex) { log.warn("Spare part stock issue posting failed for rectification {}: {}", saved.getId(), ex.getMessage()); }
 
         if (r.getStartTime() != null && r.getEndTime() != null) {
             long mins = ChronoUnit.MINUTES.between(r.getStartTime(), r.getEndTime());
@@ -204,8 +269,14 @@ public class MaintenanceController {
     public BreakdownRectification rectificationAction(@PathVariable Long id, @PathVariable String action, Principal principal) {
         BreakdownRectification r = rectifications.findById(id).orElseThrow(() -> new RuntimeException("Rectification not found"));
         switch (action.toLowerCase()) {
-            case "complete": r.setStatus("COMPLETED"); r.setEndTime(Instant.now()); break;
-            case "close": r.setStatus("CLOSED"); break;
+            case "complete":
+                r.setStatus("COMPLETED"); r.setEndTime(Instant.now());
+                releaseMachineFromBreakdown(r.getBreakdownId(), r.getMachineCode());
+                break;
+            case "close":
+                r.setStatus("CLOSED");
+                releaseMachineFromBreakdown(r.getBreakdownId(), r.getMachineCode());
+                break;
             case "pass": r.setTestingResult("PASS"); break;
             case "fail": r.setTestingResult("FAIL"); break;
             default: throw new RuntimeException("Unknown action: " + action);
@@ -304,7 +375,28 @@ public class MaintenanceController {
     // ===========================
 
     @GetMapping("/api/v1/maintenance/pm-schedules")
-    public List<PMSchedule> listPMSchedules() { return pmSchedules.findAll(); }
+    public List<Map<String, Object>> listPMSchedules() {
+        return pmSchedules.findAll().stream().map(s -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", s.getId());
+            m.put("scheduleNumber", s.getScheduleNumber());
+            m.put("planId", s.getPlanId());
+            m.put("planNumber", s.getPlanNumber());
+            m.put("machineCode", s.getMachineCode());
+            m.put("scheduledDate", s.getScheduledDate());
+            m.put("dueDate", s.getDueDate());
+            m.put("completedDate", s.getCompletedDate());
+            m.put("assignedTo", s.getAssignedTo());
+            m.put("status", s.getStatus());
+            m.put("priority", s.getPriority());
+            m.put("remarks", s.getRemarks());
+            m.put("createdAt", s.getCreatedAt());
+            if (s.getStatus() != null) {
+                workflowEngine.enrich("PM_SCHEDULE", s.getStatus(), m);
+            }
+            return m;
+        }).toList();
+    }
 
     @PostMapping("/api/v1/maintenance/pm-schedules")
     public PMSchedule createPMSchedule(@RequestBody PMSchedule s, Principal principal) {
@@ -374,7 +466,13 @@ public class MaintenanceController {
         if (c.getDurationHours() == null) c.setDurationHours(BigDecimal.ZERO);
         if (c.getStatus() == null) c.setStatus("DRAFT");
         setCreated(c, principalName(principal));
-        return pmCompletions.save(c);
+        PMCompletion saved = pmCompletions.save(c);
+
+        // §7.3: Auto-post stock issues for linked spare parts
+        try { sparePartStockService.postPmCompletionStockIssues(saved.getId(), saved.getCompletionNumber(), saved.getMachineCode()); }
+        catch (Exception ex) { log.warn("Spare part stock issue posting failed for PM completion {}: {}", saved.getId(), ex.getMessage()); }
+
+        return saved;
     }
 
     @GetMapping("/api/v1/maintenance/pm-completions/{id}")

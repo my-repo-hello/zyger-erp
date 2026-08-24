@@ -29,6 +29,7 @@ export default function ItemMasterScreen() {
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Item | null>(null);
   const [busy, setBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState('basic');
 
   const load = async () => {
     setLoading(true);
@@ -86,81 +87,108 @@ export default function ItemMasterScreen() {
         <div className="panel-h">
           <h2><span className="material-symbols-rounded">add</span> {editId ? 'Edit' : 'Add'} Item</h2>
         </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <button type="button" className={`btn btn-sm ${activeTab === 'basic' ? 'btn-p' : ''}`} onClick={() => setActiveTab('basic')}>Basic Info</button>
+          <button type="button" className={`btn btn-sm ${activeTab === 'purchase' ? 'btn-p' : ''}`} onClick={() => setActiveTab('purchase')}>Purchase</button>
+          <button type="button" className={`btn btn-sm ${activeTab === 'sales' ? 'btn-p' : ''}`} onClick={() => setActiveTab('sales')}>Sales</button>
+          <button type="button" className={`btn btn-sm ${activeTab === 'engineering' ? 'btn-p' : ''}`} onClick={() => setActiveTab('engineering')}>Engineering</button>
+          <button type="button" className={`btn btn-sm ${activeTab === 'inventory' ? 'btn-p' : ''}`} onClick={() => setActiveTab('inventory')}>Inventory</button>
+        </div>
         <div className="fgrid">
-          <label className="fld"><span>Code *</span>
-            <input className="in" value={String(form.code ?? '')} onChange={(e) => set('code', e.target.value)} />
-          </label>
-          <label className="fld"><span>Description *</span>
-            <input className="in" value={String(form.description ?? '')} onChange={(e) => set('description', e.target.value)} />
-          </label>
-          <label className="fld"><span>UOM</span>
-            <select className="in" value={String(form.uom ?? '')} onChange={(e) => set('uom', e.target.value)}>
-              <option value="">Select...</option>
-              <option value="NOS">Nos</option>
-              <option value="KG">Kg</option>
-              <option value="MTR">Meter</option>
-              <option value="LTR">Litre</option>
-              <option value="SQM">Sq. Meter</option>
-              <option value="SET">Set</option>
-              <option value="BOX">Box</option>
-              <option value="PCS">Pcs</option>
-            </select>
-          </label>
-          <label className="fld"><span>Category</span>
-            <input className="in" value={String(form.category ?? '')} onChange={(e) => set('category', e.target.value)} />
-          </label>
-          <label className="fld"><span>Item Type</span>
-            <select className="in" value={String(form.itemType ?? '')} onChange={(e) => set('itemType', e.target.value)}>
-              <option value="">Select...</option>
-              <option value="RAW">Raw Material</option>
-              <option value="FG">Finished Good</option>
-              <option value="SFG">Semi-Finished</option>
-              <option value="CONSUMABLE">Consumable</option>
-              <option value="TOOL">Tool</option>
-              <option value="SPARE">Spare Part</option>
-            </select>
-          </label>
-          <label className="fld"><span>Default Rate</span>
-            <input className="in" type="number" step="0.01" value={String(form.defaultRate ?? '')} onChange={(e) => set('defaultRate', e.target.value ? Number(e.target.value) : null)} />
-          </label>
-          <label className="fld"><span>Safety Stock</span>
-            <input className="in" type="number" step="0.01" value={String(form.safetyStock ?? '')} onChange={(e) => set('safetyStock', e.target.value ? Number(e.target.value) : null)} />
-          </label>
-          <label className="fld"><span>Drawing Number</span>
-            <input className="in" value={String(form.drawingNumber ?? '')} onChange={(e) => set('drawingNumber', e.target.value)} />
-          </label>
-          <label className="fld"><span>Drawing Revision</span>
-            <input className="in" value={String(form.drawingRevision ?? '')} onChange={(e) => set('drawingRevision', e.target.value)} />
-          </label>
-          <label className="fld"><span>Lead Time (Days)</span>
-            <input className="in" type="number" value={String(form.leadTimeDays ?? '')} onChange={(e) => set('leadTimeDays', e.target.value ? Number(e.target.value) : null)} />
-          </label>
-          <label className="fld"><span>Min Order Qty</span>
-            <input className="in" type="number" step="0.01" value={String(form.minOrderQty ?? '')} onChange={(e) => set('minOrderQty', e.target.value ? Number(e.target.value) : null)} />
-          </label>
-          <label className="fld"><span>Default Warehouse</span>
-            <input className="in" value={String(form.defaultWarehouse ?? '')} onChange={(e) => set('defaultWarehouse', e.target.value)} />
-          </label>
-          <label className="fld"><span>Batch Control</span>
-            <select className="in" value={String(form.batchControl ?? false)} onChange={(e) => set('batchControl', e.target.value === 'true')}>
-              <option value="false">No</option><option value="true">Yes</option>
-            </select>
-          </label>
-          <label className="fld"><span>Serial Control</span>
-            <select className="in" value={String(form.serialControl ?? false)} onChange={(e) => set('serialControl', e.target.value === 'true')}>
-              <option value="false">No</option><option value="true">Yes</option>
-            </select>
-          </label>
-          <label className="fld"><span>Inspection Required</span>
-            <select className="in" value={String(form.inspectionRequired ?? false)} onChange={(e) => set('inspectionRequired', e.target.value === 'true')}>
-              <option value="false">No</option><option value="true">Yes</option>
-            </select>
-          </label>
-          <label className="fld"><span>Active</span>
-            <select className="in" value={String(form.active ?? 'true')} onChange={(e) => set('active', e.target.value === 'true')}>
-              <option value="true">Yes</option><option value="false">No</option>
-            </select>
-          </label>
+          {activeTab === 'basic' && (
+            <>
+              <label className="fld"><span>Code *</span>
+                <input className="in" value={String(form.code ?? '')} onChange={(e) => set('code', e.target.value)} />
+              </label>
+              <label className="fld"><span>Description *</span>
+                <input className="in" value={String(form.description ?? '')} onChange={(e) => set('description', e.target.value)} />
+              </label>
+              <label className="fld"><span>UOM</span>
+                <select className="in" value={String(form.uom ?? '')} onChange={(e) => set('uom', e.target.value)}>
+                  <option value="">Select...</option>
+                  <option value="NOS">Nos</option>
+                  <option value="KG">Kg</option>
+                  <option value="MTR">Meter</option>
+                  <option value="LTR">Litre</option>
+                  <option value="SQM">Sq. Meter</option>
+                  <option value="SET">Set</option>
+                  <option value="BOX">Box</option>
+                  <option value="PCS">Pcs</option>
+                </select>
+              </label>
+              <label className="fld"><span>Category</span>
+                <input className="in" value={String(form.category ?? '')} onChange={(e) => set('category', e.target.value)} />
+              </label>
+              <label className="fld"><span>Item Type</span>
+                <select className="in" value={String(form.itemType ?? '')} onChange={(e) => set('itemType', e.target.value)}>
+                  <option value="">Select...</option>
+                  <option value="RAW">Raw Material</option>
+                  <option value="FG">Finished Good</option>
+                  <option value="SFG">Semi-Finished</option>
+                  <option value="CONSUMABLE">Consumable</option>
+                  <option value="TOOL">Tool</option>
+                  <option value="SPARE">Spare Part</option>
+                </select>
+              </label>
+              <label className="fld"><span>Active</span>
+                <select className="in" value={String(form.active ?? 'true')} onChange={(e) => set('active', e.target.value === 'true')}>
+                  <option value="true">Yes</option><option value="false">No</option>
+                </select>
+              </label>
+            </>
+          )}
+          {activeTab === 'purchase' && (
+            <>
+              <label className="fld"><span>Lead Time (Days)</span>
+                <input className="in" type="number" value={String(form.leadTimeDays ?? '')} onChange={(e) => set('leadTimeDays', e.target.value ? Number(e.target.value) : null)} />
+              </label>
+              <label className="fld"><span>Min Order Qty</span>
+                <input className="in" type="number" step="0.01" value={String(form.minOrderQty ?? '')} onChange={(e) => set('minOrderQty', e.target.value ? Number(e.target.value) : null)} />
+              </label>
+            </>
+          )}
+          {activeTab === 'sales' && (
+            <>
+              <label className="fld"><span>Default Rate</span>
+                <input className="in" type="number" step="0.01" value={String(form.defaultRate ?? '')} onChange={(e) => set('defaultRate', e.target.value ? Number(e.target.value) : null)} />
+              </label>
+            </>
+          )}
+          {activeTab === 'engineering' && (
+            <>
+              <label className="fld"><span>Drawing Number</span>
+                <input className="in" value={String(form.drawingNumber ?? '')} onChange={(e) => set('drawingNumber', e.target.value)} />
+              </label>
+              <label className="fld"><span>Drawing Revision</span>
+                <input className="in" value={String(form.drawingRevision ?? '')} onChange={(e) => set('drawingRevision', e.target.value)} />
+              </label>
+            </>
+          )}
+          {activeTab === 'inventory' && (
+            <>
+              <label className="fld"><span>Safety Stock</span>
+                <input className="in" type="number" step="0.01" value={String(form.safetyStock ?? '')} onChange={(e) => set('safetyStock', e.target.value ? Number(e.target.value) : null)} />
+              </label>
+              <label className="fld"><span>Default Warehouse</span>
+                <input className="in" value={String(form.defaultWarehouse ?? '')} onChange={(e) => set('defaultWarehouse', e.target.value)} />
+              </label>
+              <label className="fld"><span>Batch Control</span>
+                <select className="in" value={String(form.batchControl ?? false)} onChange={(e) => set('batchControl', e.target.value === 'true')}>
+                  <option value="false">No</option><option value="true">Yes</option>
+                </select>
+              </label>
+              <label className="fld"><span>Serial Control</span>
+                <select className="in" value={String(form.serialControl ?? false)} onChange={(e) => set('serialControl', e.target.value === 'true')}>
+                  <option value="false">No</option><option value="true">Yes</option>
+                </select>
+              </label>
+              <label className="fld"><span>Inspection Required</span>
+                <select className="in" value={String(form.inspectionRequired ?? false)} onChange={(e) => set('inspectionRequired', e.target.value === 'true')}>
+                  <option value="false">No</option><option value="true">Yes</option>
+                </select>
+              </label>
+            </>
+          )}
         </div>
         <div className="actbar" style={{ justifyContent: 'flex-end' }}>
           {editId && <button className="btn" onClick={() => { setForm({}); setEditId(null); }} disabled={busy}>Cancel</button>}

@@ -20,6 +20,7 @@ public class StockLedger {
     @Column(length = 60) String location;
     @Column(length = 60) String batchNo;
     @Column(length = 60) String heatNo;
+    @Column(name = "stock_status", length = 30) @Builder.Default String stockStatus = "FREE";
     BigDecimal inQty;
     BigDecimal outQty;
     String createdBy;

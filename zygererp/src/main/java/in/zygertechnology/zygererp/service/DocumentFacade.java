@@ -9,10 +9,15 @@ import in.zygertechnology.zygererp.repo.SupplierInvoiceAttachmentRepository;
 import jakarta.annotation.PostConstruct;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.metamodel.EntityType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import in.zygertechnology.zygererp.common.Idempotent;
+import in.zygertechnology.zygererp.security.CurrentUserRoles;
 
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
@@ -24,13 +29,18 @@ import java.util.stream.Collectors;
 @Service
 public class DocumentFacade {
 
+    private static final Logger log = LoggerFactory.getLogger(DocumentFacade.class);
+
     @Autowired EntityManager em;
     @Autowired ObjectMapper mapper;
     @Autowired LedgerRepository ledger;
+    @Lazy @Autowired StockService stockService;
     @Autowired ItemCacheService itemCache;
     @Autowired DocNumberService numbers;
     @Autowired SupplierInvoiceAttachmentRepository attachments;
     @Autowired PartyRepository parties;
+    @Autowired DocumentWorkflowEngine workflowEngine;
+    @Autowired BackdatedEntryGuardService backdatedEntryGuard;
 
     private final Map<String, Class<? extends DocEntity>> reg = new HashMap<>();
 
@@ -193,6 +203,14 @@ public class DocumentFacade {
             if (emStr != null) r.put("email", emStr);
         }
         denormalizeLines(r, findKeyForEntity(e));
+
+        // Enrich with workflow allowed transitions
+        if (e.getStatus() != null) {
+            String docKey = findKeyForEntity(e);
+            String upperDocKey = docKey.toUpperCase().replace("-", "_");
+            workflowEngine.enrich(upperDocKey, e.getStatus(), r);
+        }
+
         return r;
     }
 
@@ -422,6 +440,7 @@ public class DocumentFacade {
     }
 
     @Transactional
+    @Idempotent
     public DocEntity create(String key, Map<String, Object> body, String user) {
         normalizeLines(body, key);
         DocEntity e = mapper.convertValue(body, cls(key));
@@ -436,6 +455,20 @@ public class DocumentFacade {
         e.setCreatedAt(Instant.now());
         e.setUpdatedAt(Instant.now());
         attach(e);
+
+        validateReturnEligibility(key, e);
+        validateReceivedAgainstIssue(key, e);
+        validateBatchHeat(key, e);
+        validatePoInward(key, e);
+        validateAmendmentReason(key, e);
+        validateReleaseBalance(key, e);
+        validateGeneralInwardReason(key, e);
+        validateRmIssueSir(key, e);
+        validateGrn(key, e);
+
+        // §9.3: Backdated-entry authorization guard
+        String docDateStr = body.get("date") != null ? String.valueOf(body.get("date")) : null;
+        backdatedEntryGuard.enforce(docDateStr, user);
 
         String docNo = nextUnusedNumber(key, body);
         e.setDocNo(docNo);
@@ -499,8 +532,10 @@ public class DocumentFacade {
 
         for (LineEntity line : lines) {
             QualityInspection qi = new QualityInspection();
-            qi.setDocNo(numbers.next("quality-inspection"));
-            qi.setInspectionType(QualityInspectionType.IQC);
+            QualityInspectionType inspectionType = resolveInspectionType(key);
+            String prefix = QualityInspectionService.prefixForType(inspectionType);
+            qi.setDocNo(numbers.next(QualityInspectionService.KEY, prefix));
+            qi.setInspectionType(inspectionType);
             qi.setSourceType("INWARD");
             if (e.getId() != null) qi.setSourceId(e.getId().toString());
             qi.setSourceNumber(e.getDocNo());
@@ -559,6 +594,16 @@ public class DocumentFacade {
         }
     }
 
+    private QualityInspectionType resolveInspectionType(String sourceKey) {
+        return switch (sourceKey) {
+            case "po-inward" -> QualityInspectionType.IQC;
+            case "lo-inward" -> QualityInspectionType.LO;
+            case "jo-inward" -> QualityInspectionType.FAI;
+            case "general-inward" -> QualityInspectionType.LINE;
+            default -> QualityInspectionType.IQC;
+        };
+    }
+
     private static String rootMessage(Throwable t) {
         Throwable root = t;
         while (root.getCause() != null && root.getCause() != root) root = root.getCause();
@@ -575,6 +620,11 @@ public class DocumentFacade {
 
     private String strVal(Object v) {
         return v == null ? "" : String.valueOf(v);
+    }
+
+    private boolean boolVal(Object v) {
+        return v != null && ("true".equalsIgnoreCase(String.valueOf(v))
+                || "1".equals(String.valueOf(v)) || "yes".equalsIgnoreCase(String.valueOf(v)));
     }
 
     @Transactional
@@ -683,26 +733,87 @@ public class DocumentFacade {
         return e;
     }
 
+    @Idempotent
     @Transactional
     public DocEntity action(String key, Long id, String action, String note, String user) {
+        return action(key, id, action, note, user, Map.of());
+    }
+
+    @Idempotent
+    @Transactional
+    public DocEntity action(String key, Long id, String action, String note, String user,
+                            Map<String, Object> opts) {
+        Map<String, Object> options = opts == null ? Map.of() : opts;
         DocEntity e = get(key, id);
-        switch (action) {
-            case "submit" -> requireStatus(e, "DRAFT", "REJECTED");
-            case "approve" -> requireStatus(e, "SUBMITTED");
-            case "reject" -> requireStatus(e, "SUBMITTED", "DRAFT");
-            case "reopen" -> requireStatus(e, "REJECTED");
-            case "cancel" -> requireStatus(e, "DRAFT", "SUBMITTED", "APPROVED");
-            case "post" -> {
-                requireStatus(e, "APPROVED");
-                post(key, e);
-                e.setStatus("POSTED");
+
+        // Map generic action names to status targets for workflow engine
+        String targetStatus = switch (action) {
+            case "submit" -> "SUBMITTED";
+            case "approve" -> "APPROVED";
+            case "reject" -> "REJECTED";
+            case "reopen" -> "DRAFT";
+            case "cancel" -> "CANCELLED";
+            case "post" -> "POSTED";
+            case "close" -> "CLOSED";
+            default -> action;
+        };
+
+        // Validate against workflow state machine
+        String docKey = findKeyForEntity(e);
+        String upperDocKey = docKey.toUpperCase().replace("-", "_");
+        workflowEngine.validate(upperDocKey, e.getStatus(), targetStatus);
+
+        // Legacy fallback validation for doc types not yet in the workflow engine
+        try {
+            switch (action) {
+                case "submit" -> requireStatus(e, "DRAFT", "REJECTED");
+                case "approve" -> requireStatus(e, "SUBMITTED");
+                case "reject" -> requireStatus(e, "SUBMITTED", "DRAFT");
+                case "reopen" -> requireStatus(e, "REJECTED");
+                case "cancel" -> requireStatus(e, "DRAFT", "SUBMITTED", "APPROVED");
+                case "post" -> {
+                    requireStatus(e, "APPROVED");
+                    if ("sales-dc".equals(key)) enforceFinalInspectionGate(e, options);
+                    post(key, e, boolVal(options.get("authorizedOverride")));
+                    e.setStatus("POSTED");
+                }
+                default -> { }
             }
-            default -> throw new IllegalArgumentException("Unknown action: " + action);
+        } catch (IllegalStateException ex) {
+            // If the legacy validation throws but the workflow engine allowed it,
+            // log it and rethrow the workflow error
+            throw ex;
         }
-        e.setStatus(statusFor(action, e));
+
+        if (!"post".equals(action)) {
+            e.setStatus(targetStatus);
+        }
         e.setUpdatedAt(Instant.now());
         e.setUpdatedBy(user);
+
+        // Populate lifecycle fields based on action
+        switch (action) {
+            case "submit" -> { e.setSubmittedBy(user); e.setSubmittedAt(Instant.now()); }
+            case "approve" -> { e.setApprovedByUserId(resolveUserId(user)); e.setApprovedAt(Instant.now()); }
+            case "close" -> { e.setClosedBy(user); e.setClosedAt(Instant.now()); }
+            case "cancel" -> { e.setCancelledBy(user); e.setCancelledAt(Instant.now()); }
+            case "reopen" -> { e.setReopenedBy(user); e.setReopenedAt(Instant.now()); }
+        }
+
         return e;
+    }
+
+    private Long resolveUserId(String username) {
+        if (username == null || username.isBlank()) return null;
+        try {
+            Object result = em.createQuery("SELECT u.id FROM AppUser u WHERE u.username = :uname")
+                    .setParameter("uname", username)
+                    .setMaxResults(1)
+                    .getSingleResult();
+            return result instanceof Long l ? l : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private void requireStatus(DocEntity e, String... allowed) {
@@ -722,37 +833,134 @@ public class DocumentFacade {
         };
     }
 
-    private void post(String key, DocEntity e) {
+    private void post(String key, DocEntity e, boolean allowNegativeOverride) {
         DocTypes.DocDef def = DocTypes.get(key);
         List<LedgerLine> lines = collectLines(def, e);
+        String txType = def.tx().isEmpty() ? key.toUpperCase() : def.tx();
+        String stockStatus = determineStockStatus(key, e);
+
         for (LedgerLine l : lines) {
-            double in = 0, out = 0;
-            switch (def.effect()) {
-                case IN -> in = l.qty();
-                case OUT -> out = l.qty();
+            if ("transfer-dc".equals(key)) {
+                String destLoc = headerStr(e, "destinationLocation");
+                stockService.recordStockOut(
+                        e.getDocNo(), key, txType, l.item(), l.loc(), l.batch(), l.heat(),
+                        BigDecimal.valueOf(l.qty()), e.getDocDate(), e.getCreatedBy(),
+                        allowNegativeOverride);
+                if (destLoc != null && !destLoc.isBlank()) {
+                    stockService.recordStockIn(
+                            e.getDocNo(), key, "TRANSFER_IN", l.item(), destLoc, l.batch(), l.heat(),
+                            BigDecimal.valueOf(l.qty()), e.getDocDate(), e.getCreatedBy(), "FREE");
+                }
+            } else switch (def.effect()) {
+                case IN -> stockService.recordStockIn(
+                        e.getDocNo(), key, txType, l.item(), l.loc(), l.batch(), l.heat(),
+                        BigDecimal.valueOf(l.qty()), e.getDocDate(), e.getCreatedBy(), stockStatus);
+                case OUT -> stockService.recordStockOut(
+                        e.getDocNo(), key, txType, l.item(), l.loc(), l.batch(), l.heat(),
+                        BigDecimal.valueOf(l.qty()), e.getDocDate(), e.getCreatedBy(),
+                        allowNegativeOverride);
                 case ADJUST -> {
                     double cur = currentOnHand(l.item(), l.loc(), l.batch());
                     double diff = l.qty() - cur;
-                    if (diff >= 0) in = diff; else out = -diff;
+                    if (diff != 0) {
+                        stockService.recordStockAdjustment(
+                                e.getDocNo(), key, txType, l.item(), l.loc(), l.batch(), l.heat(),
+                                BigDecimal.valueOf(diff), e.getDocDate(), e.getCreatedBy(),
+                                allowNegativeOverride);
+                    }
                 }
                 default -> { }
             }
-            if (in == 0 && out == 0) continue;
-            ledger.save(StockLedger.builder()
-                    .txDate(e.getDocDate()).docNo(e.getDocNo()).docType(key)
-                    .txType(def.tx().isEmpty() ? key.toUpperCase() : def.tx())
-                    .itemCode(l.item()).location(l.loc()).batchNo(l.batch()).heatNo(l.heat())
-                    .inQty(BigDecimal.valueOf(in)).outQty(BigDecimal.valueOf(out))
-                    .createdBy(e.getCreatedBy()).createdAt(Instant.now())
-                    .build());
         }
+    }
+
+    /** FRS §6.2: blocks dispatch of any batch/lot that has not cleared Final Inspection when the item requires QC. */
+    private void enforceFinalInspectionGate(DocEntity e, Map<String, Object> opts) {
+        if (e.getLines() == null || e.getLines().isEmpty()) return;
+        boolean forced = boolVal(opts.get("forceDispatch"));
+        if (forced && !CurrentUserRoles.hasAnyRole("ADMIN", "MANAGEMENT", "SALES_MANAGER")) {
+            throw new IllegalArgumentException(
+                    "forceDispatch requires a supervisor role (ADMIN / MANAGEMENT / SALES_MANAGER)");
+        }
+        for (LineEntity line : e.getLines()) {
+            String itemCode = line.getItemCode();
+            if (itemCode == null || itemCode.isBlank()) continue;
+            var item = itemCache.findByCode(itemCode).orElse(null);
+            if (item == null || !Boolean.TRUE.equals(item.getInspectionRequired())) continue;
+            String batchNo = line.getBatchNo() == null ? "" : line.getBatchNo();
+            String heatNo = line.getHeatNo() == null ? "" : line.getHeatNo();
+            if (hasPassingFinalInspection(itemCode, batchNo, heatNo)) continue;
+            if (forced) {
+                log.warn("FORCED DISPATCH override: item {} batch {} has not cleared Final Inspection (doc {})",
+                        itemCode, batchNo, e.getDocNo());
+                continue;
+            }
+            throw new IllegalStateException("Dispatch blocked: item " + itemCode + " batch " +
+                    (batchNo.isEmpty() ? "-" : batchNo) + " has not cleared Final Inspection");
+        }
+    }
+
+    private boolean hasPassingFinalInspection(String itemCode, String batchNo, String heatNo) {
+        Long count = em.createQuery(
+                "select count(qi) from QualityInspection qi " +
+                "where qi.itemCode = :itemCode " +
+                "and qi.inspectionType = :type " +
+                "and (:batchNo = '' or qi.batchNumber = :batchNo) " +
+                "and (:heatNo = '' or qi.heatNumber = :heatNo) " +
+                "and (qi.finalDecision = 'PASS' or qi.inspectionStatus in ('PASS', 'APPROVED'))", Long.class)
+                .setParameter("itemCode", itemCode)
+                .setParameter("type", QualityInspectionType.FINAL)
+                .setParameter("batchNo", batchNo)
+                .setParameter("heatNo", heatNo)
+                .getSingleResult();
+        return count != null && count > 0;
+    }
+
+    private String determineStockStatus(String key, DocEntity e) {
+        if ("grn".equals(key)) {
+            if (e.getLines() != null) {
+                for (LineEntity line : e.getLines()) {
+                    String itemCode = line.getItemCode();
+                    if (itemCode == null || itemCode.isBlank()) continue;
+                    var item = itemCache.findByCode(itemCode).orElse(null);
+                    if (item != null && Boolean.TRUE.equals(item.getInspectionRequired())) {
+                        return "QC_HOLD";
+                    }
+                }
+            }
+            return "FREE";
+        }
+        boolean isQcInward = Set.of("po-inward", "lo-inward", "jo-inward", "general-inward").contains(key);
+        if (isQcInward) {
+            Object qcReq = null;
+            try {
+                Field f = e.getClass().getDeclaredField("qcRequired");
+                f.setAccessible(true);
+                qcReq = f.get(e);
+            } catch (Exception ignored) {}
+            if (qcReq != null && ("true".equalsIgnoreCase(String.valueOf(qcReq)) || "Yes".equalsIgnoreCase(String.valueOf(qcReq)))) {
+                return "QC_HOLD";
+            }
+            return "FREE";
+        }
+        boolean isReturn = Set.of("dc-return", "invoice-return").contains(key);
+        if (isReturn) {
+            String disposition = headerStr(e, "disposition");
+            if ("PENDING_INSPECTION".equalsIgnoreCase(disposition) || "REWORK".equalsIgnoreCase(disposition)) {
+                return "QC_HOLD";
+            }
+            if ("SCRAP".equalsIgnoreCase(disposition)) {
+                return "SCRAP";
+            }
+            return "FREE";
+        }
+        return "FREE";
     }
 
     private record LedgerLine(String item, String loc, String batch, String heat, double qty) {}
 
     private double currentOnHand(String item, String loc, String batch) {
-        BigDecimal balance = ledger.onHandBalance(item, loc, batch);
-        return balance == null ? 0 : balance.doubleValue();
+        return stockService.onHand(item, loc, batch);
     }
 
     private List<LedgerLine> collectLines(DocTypes.DocDef def, DocEntity e) {
@@ -831,5 +1039,320 @@ public class DocumentFacade {
             if (v != null && !String.valueOf(v).isEmpty()) return String.valueOf(v);
         }
         return "";
+    }
+
+    private void validateReturnEligibility(String key, DocEntity e) {
+        if (!Set.of("dc-return", "invoice-return", "inward-return", "internal-return", "receipt-return").contains(key)) return;
+
+        String originalDocNo = null;
+        String origDocType = null;
+        if ("dc-return".equals(key) && e instanceof DcReturn dr) {
+            originalDocNo = dr.getOriginalDcNumber();
+            origDocType = "sales-dc";
+        } else if ("invoice-return".equals(key) && e instanceof InvoiceReturn ir) {
+            originalDocNo = ir.getOriginalInvoiceNumber();
+            origDocType = "sales-invoice";
+        } else if ("inward-return".equals(key) && e instanceof InwardReturn ir) {
+            originalDocNo = ir.getOriginalDocumentNo();
+            origDocType = "po-inward";
+        } else if ("internal-return".equals(key) && e instanceof InternalReturn ir) {
+            originalDocNo = ir.getOriginalDocumentNo();
+            origDocType = "general-issue";
+        } else if ("receipt-return".equals(key) && e instanceof ReceiptReturn rr) {
+            originalDocNo = headerStr(e, "originalDocumentNo");
+            origDocType = "rm-issue";
+        }
+
+        if (originalDocNo != null && !originalDocNo.isBlank()) {
+            try {
+                DocEntity origDoc = getByNumber(origDocType, originalDocNo);
+                if (!"POSTED".equals(origDoc.getStatus())) {
+                    throw new IllegalStateException("Original document " + originalDocNo + " must be POSTED to allow returns");
+                }
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalStateException("Original document " + originalDocNo + " not found");
+            }
+        }
+
+        for (LineEntity line : e.getLines()) {
+            String itemCode = line.getItemCode();
+            if (itemCode == null || itemCode.isBlank()) continue;
+            String batchNo = line.getBatchNo() != null ? line.getBatchNo() : "";
+
+            BigDecimal currentReturnQty = line.getQty();
+            if (currentReturnQty == null || currentReturnQty.compareTo(BigDecimal.ZERO) <= 0) continue;
+
+            String lineClass = switch (key) {
+                case "dc-return" -> "DcReturnLine";
+                case "internal-return" -> "InternalReturnLine";
+                case "receipt-return" -> "ReceiptReturnLine";
+                default -> "InvoiceReturnLine";
+            };
+            String origField = switch (key) {
+                case "dc-return" -> "doc.originalDcNumber";
+                case "invoice-return" -> "doc.originalInvoiceNumber";
+                case "inward-return", "internal-return", "receipt-return" -> "doc.originalDocumentNo";
+                default -> null;
+            };
+
+            String hql = "SELECT COALESCE(SUM(l.qty), 0) FROM " + lineClass + " l " +
+                "WHERE l.doc.docNo != :docNo AND l.doc.status = 'POSTED' " +
+                "AND l.itemCode = :itemCode " +
+                "AND (:batchNo = '' OR l.batchNo = :batchNo)";
+
+            if (originalDocNo != null && !originalDocNo.isBlank() && origField != null) {
+                hql += " AND " + origField + " = :origDocNo";
+            }
+
+            var query = em.createQuery(hql)
+                .setParameter("docNo", e.getDocNo() != null ? e.getDocNo() : "")
+                .setParameter("itemCode", itemCode)
+                .setParameter("batchNo", batchNo);
+            if (originalDocNo != null && !originalDocNo.isBlank() && origField != null) {
+                query = query.setParameter("origDocNo", originalDocNo);
+            }
+
+            BigDecimal previouslyReturned = (BigDecimal) query.getSingleResult();
+            if (previouslyReturned == null) previouslyReturned = BigDecimal.ZERO;
+
+            BigDecimal totalReturnQty = previouslyReturned.add(currentReturnQty);
+
+            BigDecimal originalQty = BigDecimal.ZERO;
+            if (originalDocNo != null && !originalDocNo.isBlank() && origDocType != null) {
+                try {
+                    DocEntity origDoc = getByNumber(origDocType, originalDocNo);
+                    for (LineEntity origLine : origDoc.getLines()) {
+                        if (itemCode.equals(origLine.getItemCode()) &&
+                            (batchNo.isEmpty() || batchNo.equals(origLine.getBatchNo()))) {
+                            originalQty = originalQty.add(origLine.getQty());
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (originalQty.compareTo(BigDecimal.ZERO) > 0 && totalReturnQty.compareTo(originalQty) > 0) {
+                throw new IllegalStateException(
+                    "Return qty " + currentReturnQty + " exceeds eligible balance for item " + itemCode +
+                    " (original: " + originalQty + ", already returned: " + previouslyReturned + ")");
+            }
+        }
+    }
+
+    private static final List<String> ISSUE_SOURCE_TYPES = List.of(
+            "general-issue", "rm-issue", "jo-dc-issue", "issue-internal-external", "issue-against-receipt");
+
+    /** FRS §7.2: a return against an issue cannot exceed originalIssueQty - previouslyReturnedQty. */
+    private void validateReceivedAgainstIssue(String key, DocEntity e) {
+        if (!"received-against-issue".equals(key)) return;
+        String issueNo = headerStr(e, "originalDocumentNo");
+        if (issueNo == null || issueNo.isBlank()) return;
+
+        DocEntity issueDoc = null;
+        for (String t : ISSUE_SOURCE_TYPES) {
+            try {
+                issueDoc = getByNumber(t, issueNo);
+                break;
+            } catch (IllegalArgumentException ignored) {}
+        }
+
+        for (LineEntity line : e.getLines()) {
+            String itemCode = line.getItemCode();
+            if (itemCode == null || itemCode.isBlank()) continue;
+            BigDecimal returnQty = line.getQty();
+            if (returnQty == null || returnQty.compareTo(BigDecimal.ZERO) <= 0) continue;
+
+            String batchNo = line.getBatchNo() == null ? "" : line.getBatchNo();
+
+            BigDecimal previouslyReturned = BigDecimal.ZERO;
+            try {
+                var result = em.createQuery(
+                        "SELECT COALESCE(SUM(l.returnedQty), 0) FROM ReceivedAgainstIssueLine l " +
+                        "WHERE l.doc.originalDocumentNo = :issueNo " +
+                        "AND l.doc.status IN ('SUBMITTED', 'APPROVED', 'POSTED') " +
+                        "AND l.doc.docNo != :docNo " +
+                        "AND l.itemCode = :itemCode " +
+                        "AND (:batchNo = '' OR l.batchNo = :batchNo)",
+                        java.math.BigDecimal.class)
+                        .setParameter("issueNo", issueNo)
+                        .setParameter("docNo", e.getDocNo() != null ? e.getDocNo() : "")
+                        .setParameter("itemCode", itemCode)
+                        .setParameter("batchNo", batchNo)
+                        .getSingleResult();
+                if (result != null) previouslyReturned = result;
+            } catch (Exception ignored) {}
+
+            BigDecimal originalQty = BigDecimal.ZERO;
+            if (issueDoc != null && issueDoc.getLines() != null) {
+                for (LineEntity il : issueDoc.getLines()) {
+                    if (!itemCode.equals(il.getItemCode())) continue;
+                    if (!batchNo.isEmpty() && !batchNo.equals(il.getBatchNo())) continue;
+                    originalQty = originalQty.add(il.getQty() == null ? BigDecimal.ZERO : il.getQty());
+                }
+            }
+
+            if (originalQty.compareTo(BigDecimal.ZERO) <= 0) continue;
+
+            BigDecimal returnableBalance = originalQty.subtract(previouslyReturned);
+            if (returnQty.compareTo(returnableBalance) > 0) {
+                throw new IllegalStateException("Return quantity (" + returnQty +
+                        ") exceeds returnable balance (" + returnableBalance + ") for issue " + issueNo);
+            }
+        }
+    }
+
+    private void validateBatchHeat(String key, DocEntity e) {
+        if (e.getLines() == null) return;
+        for (LineEntity line : e.getLines()) {
+            String itemCode = line.getItemCode();
+            if (itemCode == null || itemCode.isBlank()) continue;
+            var item = itemCache.findByCode(itemCode).orElse(null);
+            if (item == null) continue;
+            if (Boolean.TRUE.equals(item.getRequiresBatch()) && (line.getBatchNo() == null || line.getBatchNo().isBlank())) {
+                throw new IllegalStateException("Item " + itemCode + " requires batch number");
+            }
+            if (Boolean.TRUE.equals(item.getRequiresHeat()) && (line.getHeatNo() == null || line.getHeatNo().isBlank())) {
+                throw new IllegalStateException("Item " + itemCode + " requires heat number");
+            }
+        }
+    }
+
+    private void validateAmendmentReason(String key, DocEntity e) {
+        if (Set.of("stock-amendment", "physical-stock-amendment").contains(key)) {
+            String reasonCode = headerStr(e, "reasonCode");
+            if (reasonCode == null || reasonCode.isBlank()) {
+                throw new IllegalStateException("Amendment reason code is required (INV-ADJ-01)");
+            }
+        }
+    }
+
+    private void validateReleaseBalance(String key, DocEntity e) {
+        if (!"stock-release".equals(key)) return;
+        String allotmentNo = headerStr(e, "allotmentNo");
+        if (allotmentNo == null || allotmentNo.isBlank()) {
+            throw new IllegalStateException("Stock Release must reference an Allotment number");
+        }
+        DocEntity allotmentDoc = getByNumber("stock-allotment", allotmentNo);
+        if (!"POSTED".equals(allotmentDoc.getStatus())) {
+            throw new IllegalStateException("Referenced allotment " + allotmentNo + " must be POSTED");
+        }
+        for (LineEntity line : e.getLines()) {
+            String itemCode = line.getItemCode();
+            double releaseQty = line.getQty() != null ? line.getQty().doubleValue() : 0;
+            double allotQty = 0;
+            for (LineEntity aLine : allotmentDoc.getLines()) {
+                if (itemCode.equals(aLine.getItemCode())) {
+                    allotQty += aLine.getQty() != null ? aLine.getQty().doubleValue() : 0;
+                }
+            }
+            double alreadyReleased = 0;
+            try {
+                var result = em.createQuery(
+                    "SELECT COALESCE(SUM(l.qty), 0) FROM StockReleaseLine l WHERE l.doc.allotmentNo = :allotmentNo AND l.doc.status = 'POSTED' AND l.itemCode = :itemCode AND l.doc.docNo != :docNo", java.math.BigDecimal.class)
+                    .setParameter("allotmentNo", allotmentNo)
+                    .setParameter("itemCode", itemCode)
+                    .setParameter("docNo", e.getDocNo() != null ? e.getDocNo() : "")
+                    .getSingleResult();
+                alreadyReleased = result != null ? result.doubleValue() : 0;
+            } catch (Exception ignored) {}
+            if (allotQty > 0 && (alreadyReleased + releaseQty) > allotQty) {
+                throw new IllegalStateException(
+                    "Release qty " + releaseQty + " for item " + itemCode + " exceeds allotment balance. Allotted: " + allotQty + ", already released: " + alreadyReleased);
+            }
+        }
+    }
+
+    private void validateGeneralInwardReason(String key, DocEntity e) {
+        if (!"general-inward".equals(key)) return;
+        String reasonCode = headerStr(e, "reasonCode");
+        if (reasonCode == null || reasonCode.isBlank()) {
+            throw new IllegalStateException("General Inward reason code is required (INV-GNI-01)");
+        }
+    }
+
+    private void validateRmIssueSir(String key, DocEntity e) {
+        if (!"rm-issue".equals(key)) return;
+        String issueRequestNo = headerStr(e, "issueRequestNo");
+        if (issueRequestNo == null || issueRequestNo.isBlank()) return;
+        DocEntity sirDoc = getByNumber("stock-issue-request", issueRequestNo);
+        if (!"POSTED".equals(sirDoc.getStatus()) && !"APPROVED".equals(sirDoc.getStatus())) {
+            throw new IllegalStateException("Referenced Stock Issue Request " + issueRequestNo + " must be APPROVED or POSTED");
+        }
+        for (LineEntity line : e.getLines()) {
+            String itemCode = line.getItemCode();
+            double issueQty = line.getQty() != null ? line.getQty().doubleValue() : 0;
+            double sirQty = 0;
+            for (LineEntity sirLine : sirDoc.getLines()) {
+                if (itemCode.equals(sirLine.getItemCode())) {
+                    sirQty += sirLine.getQty() != null ? sirLine.getQty().doubleValue() : 0;
+                }
+            }
+            double alreadyIssued = 0;
+            try {
+                var result = em.createQuery(
+                    "SELECT COALESCE(SUM(l.issueQty), 0) FROM RmIssueLine l WHERE l.doc.issueRequestNo = :sirNo AND l.doc.status = 'POSTED' AND l.itemCode = :itemCode AND l.doc.docNo != :docNo", java.math.BigDecimal.class)
+                    .setParameter("sirNo", issueRequestNo)
+                    .setParameter("itemCode", itemCode)
+                    .setParameter("docNo", e.getDocNo() != null ? e.getDocNo() : "")
+                    .getSingleResult();
+                alreadyIssued = result != null ? result.doubleValue() : 0;
+            } catch (Exception ignored) {}
+            if (sirQty > 0 && (alreadyIssued + issueQty) > sirQty) {
+                throw new IllegalStateException(
+                    "Issue qty " + issueQty + " for item " + itemCode + " exceeds SIR balance. Requested: " + sirQty + ", already issued: " + alreadyIssued);
+            }
+        }
+    }
+
+    private void validateGrn(String key, DocEntity e) {
+        if (!"grn".equals(key)) return;
+        for (LineEntity line : e.getLines()) {
+            if (line instanceof GrnLine gl) {
+                BigDecimal accepted = gl.getAcceptedQty() != null ? gl.getAcceptedQty() : BigDecimal.ZERO;
+                BigDecimal rejected = gl.getRejectedQty() != null ? gl.getRejectedQty() : BigDecimal.ZERO;
+                BigDecimal inspected = gl.getInspectedQty() != null ? gl.getInspectedQty() : null;
+                if (inspected != null && inspected.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal total = accepted.add(rejected);
+                    if (total.compareTo(inspected) > 0) {
+                        throw new IllegalStateException(
+                            "GRN line item " + gl.getItemCode() + ": accepted (" + accepted + ") + rejected (" + rejected +
+                            ") = " + total + " exceeds inspected qty (" + inspected + ")");
+                    }
+                }
+            }
+        }
+    }
+
+    private void validatePoInward(String key, DocEntity e) {
+        if (!"po-inward".equals(key)) return;
+        String poNo = headerStr(e, "purchaseOrderNo");
+        if (poNo == null || poNo.isBlank()) {
+            throw new IllegalStateException("PO Inward must reference a Purchase Order number");
+        }
+        DocEntity poDoc = getByNumber("purchase-order", poNo);
+        if (!"POSTED".equals(poDoc.getStatus()) && !"APPROVED".equals(poDoc.getStatus())) {
+            throw new IllegalStateException("Referenced PO " + poNo + " must be APPROVED or POSTED (current: " + poDoc.getStatus() + ")");
+        }
+        for (LineEntity line : e.getLines()) {
+            String itemCode = line.getItemCode();
+            double receivedQty = line.getQty() != null ? line.getQty().doubleValue() : 0;
+            double poQty = 0;
+            double alreadyReceived = 0;
+            for (LineEntity poLine : poDoc.getLines()) {
+                if (itemCode.equals(poLine.getItemCode())) {
+                    poQty += poLine.getQty() != null ? poLine.getQty().doubleValue() : 0;
+                }
+            }
+            var receivedResult = em.createQuery(
+                "SELECT COALESCE(SUM(l.receivedQty), 0) FROM PoInwardLine l WHERE l.doc.purchaseOrderNo = :poNo AND l.doc.status = 'POSTED' AND l.itemCode = :itemCode AND l.doc.docNo != :docNo", java.math.BigDecimal.class)
+                .setParameter("poNo", poNo)
+                .setParameter("itemCode", itemCode)
+                .setParameter("docNo", e.getDocNo() != null ? e.getDocNo() : "")
+                .getSingleResult();
+            alreadyReceived = receivedResult != null ? receivedResult.doubleValue() : 0;
+            if (poQty > 0 && (alreadyReceived + receivedQty) > poQty) {
+                throw new IllegalStateException(
+                    "Received qty " + receivedQty + " for item " + itemCode + " exceeds PO balance. PO qty: " + poQty + ", already received: " + alreadyReceived);
+            }
+        }
     }
 }

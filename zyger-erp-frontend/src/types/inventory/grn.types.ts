@@ -47,6 +47,7 @@ export interface GrnNextNumber {
 
 export interface GrnLinePayload {
   itemCode: string;
+  inspectedQty?: number;
   acceptedQty: number;
   rate?: number;
   rejectedQty?: number;
@@ -70,6 +71,7 @@ export interface GrnLineDto {
   itemCode: string;
   itemDesc?: string;
   uom?: string;
+  inspectedQty?: number;
   acceptedQty?: number;
   rate?: number;
   amount?: number;

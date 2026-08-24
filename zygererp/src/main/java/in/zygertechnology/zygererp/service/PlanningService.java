@@ -339,8 +339,8 @@ public class PlanningService {
 
     private long countByStatus(String key, String status) {
         Map<String, Object> page = docs.list(key, Map.of("status", status, "size", "1", "page", "0"));
-        Object content = page.getOrDefault("content", List.of());
-        if (content instanceof List<?> l) return l.size();
+        Object total = page.get("totalElements");
+        if (total instanceof Number n) return n.longValue();
         return 0;
     }
 }

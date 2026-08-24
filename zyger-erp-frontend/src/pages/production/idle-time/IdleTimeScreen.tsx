@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface IdleTime {
   id: number;
@@ -39,6 +41,27 @@ export default function IdleTimeScreen() {
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'list' | 'form'>('list');
+  const [machines, setMachines] = useState<Array<{ code: string; name: string }>>([]);
+  const [users, setUsers] = useState<Array<{ username: string; fullName: string }>>([]);
+  const [shifts, setShifts] = useState<Array<{ code: string; name: string }>>([]);
+  const [workCenters, setWorkCenters] = useState<Array<{ code: string; name: string }>>([]);
+
+  const fetchMasters = useCallback(async () => {
+    try {
+      const [mRes, uRes, sRes, wRes] = await Promise.allSettled([
+        apiClient.get('/master/machines', { params: { size: 200 } }),
+        apiClient.get('/master/users', { params: { size: 200 } }),
+        apiClient.get('/master/shifts', { params: { size: 100 } }),
+        apiClient.get('/master/work-centers', { params: { size: 100 } }),
+      ]);
+      if (mRes.status === 'fulfilled') setMachines((mRes.value.data?.content ?? mRes.value.data ?? []).filter((m: any) => m.active !== false));
+      if (uRes.status === 'fulfilled') setUsers((uRes.value.data?.content ?? uRes.value.data ?? []).filter((u: any) => u.active !== false));
+      if (sRes.status === 'fulfilled') setShifts(sRes.value.data?.content ?? sRes.value.data ?? []);
+      if (wRes.status === 'fulfilled') setWorkCenters(wRes.value.data?.content ?? wRes.value.data ?? []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (tab === 'form') fetchMasters(); }, [tab, fetchMasters]);
 
   const load = async () => {
     setLoading(true);
@@ -88,13 +111,34 @@ export default function IdleTimeScreen() {
           <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Idle Time</h2></div>
           <div className="fgrid">
             <label className="fld"><span>Entry Date</span><input className="in" type="date" value={String(form.entryDate ?? '').slice(0, 10)} onChange={(e) => set('entryDate', e.target.value)} /></label>
-            <label className="fld"><span>Machine Code *</span><input className="in" value={String(form.machineCode ?? '')} onChange={(e) => set('machineCode', e.target.value)} /></label>
-            <label className="fld"><span>Work Center</span><input className="in" value={String(form.workCenterCode ?? '')} onChange={(e) => set('workCenterCode', e.target.value)} /></label>
-            <label className="fld"><span>Operator Code</span><input className="in" value={String(form.operatorCode ?? '')} onChange={(e) => set('operatorCode', e.target.value)} /></label>
-            <label className="fld"><span>Shift Code</span><input className="in" value={String(form.shiftCode ?? '')} onChange={(e) => set('shiftCode', e.target.value)} /></label>
-            <label className="fld"><span>Start Time</span><input className="in" type="datetime-local" value={String(form.startTime ?? '').slice(0, 16)} onChange={(e) => set('startTime', e.target.value)} /></label>
-            <label className="fld"><span>End Time</span><input className="in" type="datetime-local" value={String(form.endTime ?? '').slice(0, 16)} onChange={(e) => set('endTime', e.target.value)} /></label>
-            <label className="fld"><span>Duration (min)</span><input className="in" type="number" value={String(form.duration ?? '')} onChange={(e) => set('duration', Number(e.target.value))} /></label>
+            <label className="fld"><span>Machine Code *</span>
+              <select className="in" value={String(form.machineCode ?? '')} onChange={(e) => set('machineCode', e.target.value)}>
+                <option value="">Select machine...</option>
+                {machines.map((m) => <option key={m.code} value={m.code}>{m.code} - {m.name}</option>)}
+                {form.machineCode && !machines.some((m) => m.code === form.machineCode) && <option value={String(form.machineCode)}>{String(form.machineCode)}</option>}
+              </select>
+            </label>
+            <label className="fld"><span>Work Center</span>
+              <select className="in" value={String(form.workCenterCode ?? '')} onChange={(e) => set('workCenterCode', e.target.value)}>
+                <option value="">Select...</option>
+                {workCenters.map((w) => <option key={w.code} value={w.code}>{w.code} - {w.name}</option>)}
+              </select>
+            </label>
+            <label className="fld"><span>Operator Code</span>
+              <select className="in" value={String(form.operatorCode ?? '')} onChange={(e) => set('operatorCode', e.target.value)}>
+                <option value="">Select operator...</option>
+                {users.map((u) => <option key={u.username} value={u.username}>{u.username} - {u.fullName || u.username}</option>)}
+              </select>
+            </label>
+            <label className="fld"><span>Shift Code</span>
+              <select className="in" value={String(form.shiftCode ?? '')} onChange={(e) => set('shiftCode', e.target.value)}>
+                <option value="">Select shift...</option>
+                {shifts.map((s) => <option key={s.code} value={s.code}>{s.code} - {s.name}</option>)}
+              </select>
+            </label>
+            <label className="fld"><span>Start Time</span><input className="in" type="datetime-local" value={String(form.startTime ?? '').slice(0, 16)} onChange={(e) => { set('startTime', e.target.value); const end = String(form.endTime ?? '').slice(0, 16); if (e.target.value && end) { const diff = (new Date(end).getTime() - new Date(e.target.value).getTime()) / 60000; if (diff > 0) set('duration', Math.round(diff)); } }} /></label>
+            <label className="fld"><span>End Time</span><input className="in" type="datetime-local" value={String(form.endTime ?? '').slice(0, 16)} onChange={(e) => { set('endTime', e.target.value); const start = String(form.startTime ?? '').slice(0, 16); if (start && e.target.value) { const diff = (new Date(e.target.value).getTime() - new Date(start).getTime()) / 60000; if (diff > 0) set('duration', Math.round(diff)); } }} /></label>
+            <label className="fld"><span>Duration (min)</span><input className="in" type="number" value={String(form.duration ?? '')} onChange={(e) => set('duration', Number(e.target.value))} readOnly /></label>
             <label className="fld"><span>Idle Reason *</span>
               <select className="in" value={String(form.idleReason ?? '')} onChange={(e) => set('idleReason', e.target.value)}>
                 <option value="">Select...</option>
@@ -117,6 +161,19 @@ export default function IdleTimeScreen() {
         <div className="panel">
           <div className="toolbar">
             <input className="in" placeholder="Search idle time..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(filtered as unknown as Record<string, unknown>[], [
+              { key: 'entryNumber', label: 'Doc No' },
+              { key: 'entryDate', label: 'Date' },
+              { key: 'machineCode', label: 'Machine' },
+              { key: 'workCenterCode', label: 'Work Center' },
+              { key: 'operatorCode', label: 'Operator' },
+              { key: 'shiftCode', label: 'Shift' },
+              { key: 'idleReason', label: 'Reason' },
+              { key: 'startTime', label: 'Start' },
+              { key: 'endTime', label: 'End' },
+              { key: 'duration', label: 'Duration min' },
+              { key: 'status', label: 'Status' },
+            ], 'idle-time')}><span className="material-symbols-rounded">download</span></button>
             <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Idle Entry</button>
           </div>
           <div className="twrap">
@@ -132,9 +189,10 @@ export default function IdleTimeScreen() {
                       <td>{(r.idleReason ?? '').replace(/_/g, ' ')}</td>
                       <td>{r.duration ?? '-'}</td>
                       <td>{r.workOrderNumber ?? '-'}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>
                         {r.status === 'DRAFT' && <button className="ibtn" title="Verify" onClick={() => action(r.id, 'verify')}><span className="material-symbols-rounded">fact_check</span></button>}
+                        {r.status === 'DRAFT' && <button className="ibtn" title="Cancel" onClick={() => action(r.id, 'cancel')}><span className="material-symbols-rounded">block</span></button>}
                         <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
                         {r.status === 'DRAFT' && <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(r)}><span className="material-symbols-rounded">delete</span></button>}
                       </td>

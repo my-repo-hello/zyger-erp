@@ -48,7 +48,7 @@ function StatCard({ color, gradient, icon, label, value, sub, onClick }: StatCar
             {sub}
           </div>
         ) : (
-          <div className="stat-card-sub" style={{ opacity: 0.5 }}>System Normal</div>
+          <div className="stat-card-sub" style={{ opacity: 0.5 }}>Zyger ERP</div>
         )}
       </div>
     </div>
@@ -66,84 +66,13 @@ export interface RecentActivityLogItem {
   status: string;
 }
 
-const initialActivityLog: RecentActivityLogItem[] = [
-  {
-    id: 'act-1',
-    dateTime: 'Today, 11:35 AM',
-    module: 'Inventory',
-    activity: 'Material Inward Entry',
-    refNo: 'POI-2026-0001',
-    party: 'Tata Steel Ltd',
-    user: 'Sanjai M',
-    status: 'SUBMITTED',
-  },
-  {
-    id: 'act-2',
-    dateTime: 'Today, 11:20 AM',
-    module: 'Sales',
-    activity: 'New Delivery Challan Created',
-    refNo: 'SDC-2026-0001',
-    party: 'ABC Engineering Ltd',
-    user: 'Sanjai M',
-    status: 'APPROVED',
-  },
-  {
-    id: 'act-3',
-    dateTime: 'Today, 11:05 AM',
-    module: 'Purchase',
-    activity: 'Purchase Order Issued',
-    refNo: 'PO-2026-0001',
-    party: 'Tata Steel Ltd',
-    user: 'Sanjay Kumar',
-    status: 'RELEASED',
-  },
-  {
-    id: 'act-4',
-    dateTime: 'Today, 10:45 AM',
-    module: 'Inventory',
-    activity: 'DC Return Logged',
-    refNo: 'RET-2026-0001',
-    party: 'Precision Auto Tech',
-    user: 'Sanjai M',
-    status: 'RECEIVED',
-  },
-  {
-    id: 'act-5',
-    dateTime: 'Today, 10:15 AM',
-    module: 'Quality',
-    activity: 'Inward Quality Inspection',
-    refNo: 'IQC-2026-0001',
-    party: 'Tata Steel Ltd',
-    user: 'Quality Inspector',
-    status: 'PASSED',
-  },
-  {
-    id: 'act-6',
-    dateTime: 'Today, 09:50 AM',
-    module: 'Purchase',
-    activity: 'Supplier Quotation Received',
-    refNo: 'QUOT-2026-0001',
-    party: 'Tata Steel Ltd',
-    user: 'Sanjay Kumar',
-    status: 'SELECTED',
-  },
-  {
-    id: 'act-7',
-    dateTime: 'Yesterday, 04:30 PM',
-    module: 'Sales',
-    activity: 'Sales Invoice Generated',
-    refNo: 'INV-2026-0001',
-    party: 'ABC Engineering Ltd',
-    user: 'Sanjai M',
-    status: 'POSTED',
-  },
-];
+interface MonthlyStatusRow { month: string; received: number; issued: number; onHand: number; }
+interface CategoryDistributionRow { category: string; value: number; }
 
 export default function DashboardPage() {
   const { openTab } = useTabs();
   const {
     summary,
-    recentLedger,
     isLoading,
     isError,
     errorMessage,
@@ -151,12 +80,27 @@ export default function DashboardPage() {
   } = useInventoryDashboard();
 
   const [activeChartTab, setActiveChartTab] = useState<'valuation' | 'traffic'>('valuation');
+  const [monthlyStatus, setMonthlyStatus] = useState<MonthlyStatusRow[]>([]);
+  const [categoryDistribution, setCategoryDistribution] = useState<CategoryDistributionRow[]>([]);
   const [activityLog, setActivityLog] = useState<RecentActivityLogItem[]>(() => getStoredActivityLogs() as RecentActivityLogItem[]);
   const [activitySearch, setActivitySearch] = useState<string>('');
   const [activityModule, setActivityModule] = useState<string>('');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   const [activityPage, setActivityPage] = useState<number>(1);
+
+  useEffect(() => {
+    let cancelled = false;
+    axiosClient.get('/inventory/reports/overview')
+      .then((res) => {
+        if (cancelled) return;
+        const data = res.data ?? {};
+        if (Array.isArray(data.monthlyStatus)) setMonthlyStatus(data.monthlyStatus);
+        if (Array.isArray(data.categoryDistribution)) setCategoryDistribution(data.categoryDistribution);
+      })
+      .catch(() => { /* charts fall back to empty state */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const filteredActivityLogs = useMemo(() => {
     return activityLog.filter((log) => {
@@ -215,7 +159,7 @@ export default function DashboardPage() {
       axiosClient.get('/v1/sales/sales-dc?size=5'),
       axiosClient.get('/v1/purchase/purchase-order?size=5'),
       axiosClient.get('/inventory/documents/po-inward?size=5'),
-      axiosClient.get('/v1/inventory/return-management?size=5'),
+      axiosClient.get('/inventory/return-management/dc-return?size=5'),
     ]).then(([salesRes, poRes, inwardRes, returnRes]) => {
       const fetchedLogs: RecentActivityLogItem[] = [];
 
@@ -340,31 +284,23 @@ export default function DashboardPage() {
     );
   }
 
-  // Sample data for charts
-  const valueTrendData = [
-    { name: 'Mar', value: 85.4 },
-    { name: 'Apr', value: 92.8 },
-    { name: 'May', value: 110.2 },
-    { name: 'Jun', value: 105.6 },
-    { name: 'Jul', value: 125.1 },
-    { name: 'Aug', value: 142.3 },
-  ];
+  // Chart data derived from real stock ledger (backend /inventory/reports/overview)
+  const valueTrendData = monthlyStatus.map((row) => ({ name: row.month, value: row.onHand }));
 
-  const trafficData = [
-    { name: 'Mar', Inward: 12000, Outward: 10500 },
-    { name: 'Apr', Inward: 14500, Outward: 13000 },
-    { name: 'May', Inward: 18000, Outward: 15500 },
-    { name: 'Jun', Inward: 15000, Outward: 16000 },
-    { name: 'Jul', Inward: 21000, Outward: 19000 },
-    { name: 'Aug', Inward: 24500, Outward: 22000 },
-  ];
+  const trafficData = monthlyStatus.map((row) => ({
+    name: row.month,
+    Inward: row.received,
+    Outward: row.issued,
+  }));
 
-  const categoryData = [
-    { name: 'Raw Materials', value: 45 },
-    { name: 'Finished Goods', value: 30 },
-    { name: 'Consumables', value: 15 },
-    { name: 'Semi-Finished', value: 10 },
-  ];
+  const categoryTotal = categoryDistribution.reduce((sum, row) => sum + (Number(row.value) || 0), 0);
+  const categoryData = categoryDistribution
+    .filter((row) => row.category && Number(row.value) > 0)
+    .map((row) => ({
+      name: row.category,
+      value: categoryTotal > 0 ? Math.round((Number(row.value) / categoryTotal) * 1000) / 10 : 0,
+      absolute: Number(row.value),
+    }));
 
   const COLORS = ['#007bd6', '#7367f0', '#ff9f43', '#28c76f'];
 
@@ -618,7 +554,7 @@ export default function DashboardPage() {
       <div className="dash-header-flex">
         <div className="dash-header-left">
           <h1>Dashboard</h1>
-          <p>Real-time stock visibility • AR Precision Plant 01</p>
+          <p>Real-time inventory visibility</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ fontSize: '0.8rem', color: 'var(--muted)', fontWeight: 600 }}>
@@ -702,19 +638,24 @@ export default function DashboardPage() {
                 className={`chart-tab-btn ${activeChartTab === 'valuation' ? 'active' : ''}`}
                 onClick={() => setActiveChartTab('valuation')}
               >
-                Valuation Trend
+                Stock On-Hand Trend
               </button>
               <button
                 className={`chart-tab-btn ${activeChartTab === 'traffic' ? 'active' : ''}`}
                 onClick={() => setActiveChartTab('traffic')}
               >
-                Inward/Outward Traffic
+                Inward / Outward
               </button>
             </div>
           </div>
 
           <div style={{ width: '100%', height: '280px', marginTop: '10px' }}>
-            {activeChartTab === 'valuation' ? (
+            {valueTrendData.length === 0 && trafficData.length === 0 ? (
+              <div className="empty">
+                <span className="material-symbols-rounded">monitoring</span>
+                No stock movement recorded yet.
+              </div>
+            ) : activeChartTab === 'valuation' ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={valueTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
@@ -729,7 +670,7 @@ export default function DashboardPage() {
                   <Tooltip
                     contentStyle={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: '10px' }}
                     labelStyle={{ fontWeight: 700, color: 'var(--text)' }}
-                    formatter={(value: any) => [`₹${value} Lakhs`, 'Stock Value']}
+                    formatter={(value: any) => [`${value}`, 'On-Hand Qty']}
                   />
                   <Area type="monotone" dataKey="value" stroke="var(--blue)" strokeWidth={2.5} fillOpacity={1} fill="url(#colorValuation)" />
                 </AreaChart>
@@ -762,24 +703,31 @@ export default function DashboardPage() {
             </h2>
           </div>
           <div style={{ width: '100%', height: '220px', position: 'relative' }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={categoryData}
-                  cx="50%"
-                  cy="45%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {categoryData.map((_entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: any) => [`${value}%`, 'Share']} />
-              </PieChart>
-            </ResponsiveContainer>
+            {categoryData.length === 0 ? (
+              <div className="empty">
+                <span className="material-symbols-rounded">pie_chart</span>
+                No stock data to categorize.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={categoryData}
+                    cx="50%"
+                    cy="45%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {categoryData.map((_entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: any) => [`${value}%`, 'Share']} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 12px', justifyContent: 'center', marginTop: '-10px' }}>
             {categoryData.map((item, idx) => (

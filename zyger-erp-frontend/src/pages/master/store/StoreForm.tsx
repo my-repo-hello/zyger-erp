@@ -18,6 +18,13 @@ export default function StoreForm({ storeId, viewOnly = false, onBack, onSaved }
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const fetchNextCode = async () => {
+    try {
+      const { data } = await apiClient.get('/master/stores/next-code');
+      setForm((c) => ({ ...c, code: data.code }));
+    } catch { /* code field will remain empty if fetch fails */ }
+  };
+
   useEffect(() => {
     if (!storeId) {
       setForm(defaultForm());
@@ -34,13 +41,6 @@ export default function StoreForm({ storeId, viewOnly = false, onBack, onSaved }
       onBack();
     }).finally(() => setLoading(false));
   }, [storeId]);
-
-  const fetchNextCode = async () => {
-    try {
-      const { data } = await apiClient.get('/master/stores/next-code');
-      setForm((c) => ({ ...c, code: data.code }));
-    } catch { /* code field will remain empty if fetch fails */ }
-  };
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
 

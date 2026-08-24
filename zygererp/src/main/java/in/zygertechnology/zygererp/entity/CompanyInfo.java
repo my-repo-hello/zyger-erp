@@ -2,9 +2,11 @@ package in.zygertechnology.zygererp.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import java.time.Instant;
 
 @Entity @Table(name = "company_info")
+@EntityListeners(AuditEntityListener.class)
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class CompanyInfo {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;

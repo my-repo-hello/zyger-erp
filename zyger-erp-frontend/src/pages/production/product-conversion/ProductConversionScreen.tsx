@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 import { printDocument as printDoc } from '../../../utils/printDocument';
+import { exportToCsv } from '../../../utils/csvExport';
 
 interface ProductConversion {
   id: number;
@@ -45,6 +47,16 @@ export default function ProductConversionScreen() {
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'list' | 'form'>('list');
+  const [items, setItems] = useState<Array<{ code: string; name: string; uom?: string }>>([]);
+
+  const fetchItems = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get('/master/items', { params: { size: 500, active: true, sort: 'code,asc' } });
+      setItems((data?.content ?? data ?? []).filter((i: any) => i.active !== false));
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (tab === 'form') fetchItems(); }, [tab, fetchItems]);
 
   const load = async () => {
     setLoading(true);
@@ -110,12 +122,22 @@ export default function ProductConversionScreen() {
             <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
             <label className="fld"><span>Job Card No</span><input className="in" value={String(form.jobCardNumber ?? '')} onChange={(e) => set('jobCardNumber', e.target.value)} /></label>
             <hr style={{ gridColumn: '1 / -1', border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0' }} />
-            <label className="fld"><span>Input Item Code *</span><input className="in" value={String(form.inputItemCode ?? '')} onChange={(e) => set('inputItemCode', e.target.value)} /></label>
+            <label className="fld"><span>Input Item Code *</span>
+              <select className="in" value={String(form.inputItemCode ?? '')} onChange={(e) => { const item = items.find((i) => i.code === e.target.value); set('inputItemCode', e.target.value); if (item?.uom) set('inputUom', item.uom); }}>
+                <option value="">Select item...</option>
+                {items.map((i) => <option key={i.code} value={i.code}>{i.code} - {i.name}</option>)}
+              </select>
+            </label>
             <label className="fld"><span>Input Batch No</span><input className="in" value={String(form.inputBatchNumber ?? '')} onChange={(e) => set('inputBatchNumber', e.target.value)} /></label>
             <label className="fld"><span>Input Quantity</span><input className="in" type="number" value={String(form.inputQuantity ?? '')} onChange={(e) => set('inputQuantity', Number(e.target.value))} /></label>
             <label className="fld"><span>Input UOM</span><input className="in" value={String(form.inputUom ?? '')} onChange={(e) => set('inputUom', e.target.value)} /></label>
             <hr style={{ gridColumn: '1 / -1', border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0' }} />
-            <label className="fld"><span>Output Item Code *</span><input className="in" value={String(form.outputItemCode ?? '')} onChange={(e) => set('outputItemCode', e.target.value)} /></label>
+            <label className="fld"><span>Output Item Code *</span>
+              <select className="in" value={String(form.outputItemCode ?? '')} onChange={(e) => { const item = items.find((i) => i.code === e.target.value); set('outputItemCode', e.target.value); if (item?.uom) set('outputUom', item.uom); }}>
+                <option value="">Select item...</option>
+                {items.map((i) => <option key={i.code} value={i.code}>{i.code} - {i.name}</option>)}
+              </select>
+            </label>
             <label className="fld"><span>Output Batch No</span><input className="in" value={String(form.outputBatchNumber ?? '')} onChange={(e) => set('outputBatchNumber', e.target.value)} /></label>
             <label className="fld"><span>Output Quantity</span><input className="in" type="number" value={String(form.outputQuantity ?? '')} onChange={(e) => set('outputQuantity', Number(e.target.value))} /></label>
             <label className="fld"><span>Output UOM</span><input className="in" value={String(form.outputUom ?? '')} onChange={(e) => set('outputUom', e.target.value)} /></label>
@@ -137,6 +159,16 @@ export default function ProductConversionScreen() {
         <div className="panel">
           <div className="toolbar">
             <input className="in" placeholder="Search conversions..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(filtered as unknown as Record<string, unknown>[], [
+              { key: 'conversionNumber', label: 'Doc No' },
+              { key: 'conversionDate', label: 'Date' },
+              { key: 'inputItemCode', label: 'Input Item' },
+              { key: 'inputQuantity', label: 'Input Qty' },
+              { key: 'outputItemCode', label: 'Output Item' },
+              { key: 'outputQuantity', label: 'Output Qty' },
+              { key: 'conversionFactor', label: 'Factor' },
+              { key: 'status', label: 'Status' },
+            ], 'product-conversion')}><span className="material-symbols-rounded">download</span></button>
             <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Conversion</button>
           </div>
           <div className="twrap">
@@ -153,9 +185,10 @@ export default function ProductConversionScreen() {
                       <td>{r.outputItemCode}</td>
                       <td>{r.outputQuantity} {r.outputUom}</td>
                       <td>{r.processLossQty ?? 0}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>
                         {r.status === 'DRAFT' && <button className="ibtn" title="Complete" onClick={() => action(r.id, 'complete')}><span className="material-symbols-rounded">check_circle</span></button>}
+                        {r.status === 'DRAFT' && <button className="ibtn" title="Cancel" onClick={() => action(r.id, 'cancel')}><span className="material-symbols-rounded">block</span></button>}
                         <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
                         <button className="ibtn" title="Print" onClick={() => printDocument(r.id, 'print')}><span className="material-symbols-rounded">print</span></button>
                         <button className="ibtn" title="Download PDF" onClick={() => printDocument(r.id, 'download')}><span className="material-symbols-rounded">download</span></button>

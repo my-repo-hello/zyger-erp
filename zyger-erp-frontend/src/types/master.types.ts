@@ -17,6 +17,9 @@ export interface SupplierDto {
 export interface PurchaseOrderDto {
   number: string;
   supplierCode?: string;
+  supplier?: string;
+  supplierName?: string;
+  party?: string;
   status?: string;
 }
 

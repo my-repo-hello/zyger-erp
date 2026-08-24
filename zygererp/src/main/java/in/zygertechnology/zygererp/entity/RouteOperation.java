@@ -23,6 +23,10 @@ public class RouteOperation implements LineEntity {
     @Column(name = "queue_time") BigDecimal queueTime;
     @Column(name = "move_time") BigDecimal moveTime;
     @Column(name = "inspection_required") boolean inspectionRequired;
+    /** FRS §8.3 quality inspection type triggered by this operation, e.g. IPQC, FAI, LAST_OFF. */
+    @Column(name = "inspection_type", length = 30) String inspectionType;
+    /** FRS §8.3 alternate machine that can run this operation when the primary is unavailable. */
+    @Column(name = "alternate_machine_code", length = 60) String alternateMachineCode;
     @Column(name = "subcontract_flag") boolean subcontractFlag;
     @Column(name = "tool_required") boolean toolRequired;
     @Column(name = "fixture_required") boolean fixtureRequired;

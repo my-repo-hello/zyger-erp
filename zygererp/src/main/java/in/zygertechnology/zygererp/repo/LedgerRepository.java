@@ -13,6 +13,8 @@ public interface LedgerRepository extends JpaRepository<StockLedger, Long> {
 
     boolean existsByItemCode(String itemCode);
 
+    boolean existsByDocNoAndDocType(String docNo, String docType);
+
     @Query("SELECT COALESCE(SUM(s.inQty),0) - COALESCE(SUM(s.outQty),0) FROM StockLedger s " +
            "WHERE s.itemCode = :item " +
            "AND (:loc IS NULL OR :loc = '' OR s.location = :loc) " +

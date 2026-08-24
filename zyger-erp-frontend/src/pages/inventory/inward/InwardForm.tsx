@@ -266,7 +266,7 @@ export default function InwardForm({
           setHeader((prev) => ({ ...prev, supplier: matchedSupplier ? matchedSupplier.code : supp }));
         }
         if (doc.subcontractor) {
-          setHeader((prev) => ({ ...prev, subcontractor: doc.subcontractor }));
+          setHeader((prev) => ({ ...prev, subcontractor: doc.subcontractor || '' }));
         }
 
         if (doc.lines && doc.lines.length > 0) {
@@ -476,7 +476,7 @@ export default function InwardForm({
         activity: `Material Inward Entry (${saved.docNo ?? docNo})`,
         refNo: saved.docNo ?? docNo,
         party: header.party || header.supplier || header.vendor || 'Supplier',
-        user: user?.username || 'Sanjai M',
+        user: user?.username || 'Unknown',
         status: saved.status || (submit ? 'SUBMITTED' : 'DRAFT'),
       });
 

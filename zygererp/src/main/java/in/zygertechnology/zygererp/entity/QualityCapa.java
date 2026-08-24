@@ -35,6 +35,13 @@ public class QualityCapa extends BaseDoc implements DocEntity {
     @Column(name = "ncr_id")
     Long ncrId;
 
+    /** FK to quality_customer_complaint.id when sourceType = CUSTOMER_COMPLAINT (FRS §10.5) */
+    @Column(name = "source_complaint_id")
+    Long sourceComplaintId;
+    /** FK to non_conformance_report.id when CAPA originates from an NCR (FRS §10.5) */
+    @Column(name = "source_ncr_id")
+    Long sourceNcrId;
+
     @Column(name = "problem_description", length = 2048)
     String problemDescription;
 

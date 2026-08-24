@@ -46,6 +46,12 @@ public class EngineeringChange {
     @Column(length = 30)
     String status;
 
+    @Column(name = "ecr_status", length = 30)
+    String ecrStatus = "DRAFT";
+
+    @Column(name = "eco_status", length = 30)
+    String ecoStatus = "DRAFT";
+
     @Column(name = "bom_impact")
     Boolean bomImpact;
 

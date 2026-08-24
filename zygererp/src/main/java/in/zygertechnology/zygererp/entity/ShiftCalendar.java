@@ -2,9 +2,12 @@ package in.zygertechnology.zygererp.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import java.time.LocalTime;
 
-@Entity @Table(name = "shift_calendar") @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@Entity @Table(name = "shift_calendar")
+@EntityListeners(AuditEntityListener.class)
+@Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class ShiftCalendar {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
     @Version Long version;

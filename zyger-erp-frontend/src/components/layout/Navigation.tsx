@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NAV_ITEMS } from '../../config/navigation';
 import type { NavGroupNode, NavLeafNode, NavNode, NavTopItem } from '../../config/navigation';
 
 export interface NavigationNavigatePayload {
@@ -9,10 +8,11 @@ export interface NavigationNavigatePayload {
 }
 
 interface NavigationProps {
+  items: NavTopItem[];
   onNavigate: (payload: NavigationNavigatePayload) => void;
 }
 
-export default function Navigation({ onNavigate }: NavigationProps) {
+export default function Navigation({ items, onNavigate }: NavigationProps) {
   const [openTopId, setOpenTopId] = useState<string | null>(null);
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => new Set());
   const [flyLeftIds, setFlyLeftIds] = useState<Set<string>>(() => new Set());
@@ -55,8 +55,6 @@ export default function Navigation({ onNavigate }: NavigationProps) {
   };
 
   const toggleGroup = (groupId: string, siblingGroupIds: string[], anchor?: Element | null) => {
-    // Edge detection: fly the submenu out to the right unless there is no
-    // room left in the viewport, in which case flip it (and its arrow) left.
     if (anchor) {
       const li = anchor instanceof HTMLElement ? anchor : anchor.parentElement;
       const rect = li?.getBoundingClientRect();
@@ -171,7 +169,7 @@ export default function Navigation({ onNavigate }: NavigationProps) {
   return (
     <nav className="navigation" ref={navRef}>
       <ul className="nav-menu">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const isOpen = openTopId === item.id;
 
           const className = [

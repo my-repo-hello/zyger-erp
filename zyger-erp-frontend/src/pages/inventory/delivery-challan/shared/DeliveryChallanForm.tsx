@@ -286,7 +286,7 @@ export default function DeliveryChallanForm({
     }
 
     try {
-      let targetId = documentId ?? currentDocument?.id ?? null;
+      const targetId = documentId ?? currentDocument?.id ?? null;
 
       if (targetId && status === 'REJECTED') {
         await actionMutation.mutateAsync({
@@ -587,6 +587,27 @@ export default function DeliveryChallanForm({
                 ))}
               </select>
             </label>
+
+            {config.screenId === 'transfer-dc' && (
+              <label className="fld">
+                <span>To Location <em>*</em></span>
+                <select
+                  className="in"
+                  value={form.destinationLocation || ''}
+                  disabled={!editable}
+                  onChange={(event) =>
+                    updateField('destinationLocation', event.target.value)
+                  }
+                >
+                  <option value="">— Select —</option>
+                  {locations.map((location) => (
+                    <option key={location.code} value={location.code}>
+                      {location.code}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
 
             <label className="fld">
               <span>Vehicle No</span>

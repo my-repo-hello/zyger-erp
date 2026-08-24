@@ -21,6 +21,7 @@ export interface DeliveryChallanFormState {
   date: string;
   party: string;
   sourceLocation: string;
+  destinationLocation: string;
   vehicleNo: string;
   transporter: string;
   linkedDocumentNo: string;
@@ -55,6 +56,7 @@ export function createEmptyForm(): DeliveryChallanFormState {
     date: todayISO(),
     party: '',
     sourceLocation: '',
+    destinationLocation: '',
     vehicleNo: '',
     transporter: '',
     linkedDocumentNo: '',
@@ -99,6 +101,7 @@ export function formFromDto(
     date: dto.date ?? '',
     party: dto.party ?? '',
     sourceLocation: dto.sourceLocation ?? '',
+    destinationLocation: (dto as any).destinationLocation ?? '',
     vehicleNo: dto.vehicleNo ?? '',
     transporter: dto.transporter ?? '',
     linkedDocumentNo: dto.linkedDocumentNo ?? '',
@@ -121,6 +124,7 @@ export function buildPayload(
     date: form.date,
     party: form.party.trim(),
     sourceLocation: form.sourceLocation.trim(),
+    destinationLocation: form.destinationLocation.trim() || undefined,
     vehicleNo: form.vehicleNo.trim() || undefined,
     transporter: form.transporter.trim() || undefined,
     linkedDocumentNo: form.linkedDocumentNo.trim() || undefined,

@@ -3,6 +3,7 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface BreakdownOption {
   id: number;
@@ -182,7 +183,7 @@ export default function BreakdownRectificationScreen() {
                       <td>{r.machineCode}</td>
                       <td>{r.technicianCode}</td>
                       <td>{r.downtimeMinutes ?? '-'}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.DRAFT).color, background: (SC[r.status] ?? SC.DRAFT).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>{r.testingResult ?? '-'}</td>
                       <td style={{ position: 'relative' }}>
                         <button className="ibtn" title="Actions" onClick={(e) => { e.stopPropagation(); setOpenActionMenu(openActionMenu === r.id ? null : r.id); }}>

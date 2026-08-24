@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useTabs } from '../../../contexts/TabsContext';
+import { getScreenComponent } from '../../../config/screenRegistry';
 import { getApiErrorMessage } from '../../../utils/apiError';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface PendingItem {
   jobCardNumber: string;
@@ -31,9 +34,21 @@ const PR: Record<string, { color: string; bg: string }> = {
 
 export default function ProductionPendingScreen() {
   const { toast } = useToast();
+  const { openTab } = useTabs();
   const [rows, setRows] = useState<PendingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+
+  const openJobCard = (jobCardNumber: string) => {
+    if (!jobCardNumber) return;
+    openTab({
+      id: `job-card-view-${jobCardNumber}`,
+      label: `JC ${jobCardNumber}`,
+      icon: 'assignment',
+      component: getScreenComponent('job-card'),
+      props: { initialSearch: jobCardNumber },
+    });
+  };
 
   const load = async () => {
     setLoading(true);
@@ -108,14 +123,23 @@ export default function ProductionPendingScreen() {
                   <tr><td colSpan={11}><div className="empty"><span className="material-symbols-rounded">check_circle</span> No pending production jobs.</div></td></tr>
                 ) : filtered.sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0) || (b.pendingQuantity ?? 0) - (a.pendingQuantity ?? 0)).map((r) => (
                   <tr key={r.jobCardNumber} style={r.overdue ? { background: 'rgba(239,68,68,0.05)' } : undefined}>
-                    <td><b>{r.jobCardNumber}</b></td>
+                    <td>
+                      <a
+                        href="#"
+                        onClick={(e) => { e.preventDefault(); openJobCard(r.jobCardNumber); }}
+                        style={{ color: '#2563eb', textDecoration: 'underline', cursor: 'pointer', fontWeight: 600 }}
+                        title={`Open Job Card ${r.jobCardNumber}`}
+                      >
+                        {r.jobCardNumber}
+                      </a>
+                    </td>
                     <td>{r.workOrderNumber ?? '-'}</td>
                     <td>{r.partCode}</td>
                     <td>{r.partDescription ?? '-'}</td>
                     <td>{r.plannedQuantity}</td>
                     <td style={{ color: '#22c55e' }}>{r.completedQuantity}</td>
                     <td style={{ color: '#ef4444', fontWeight: 600 }}>{r.pendingQuantity}</td>
-                    <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.RELEASED).color, background: (SC[r.status] ?? SC.RELEASED).bg }}>{r.status}</span></td>
+                    <td><StatusBadge status={r.status} variant={SC} /></td>
                     <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (PR[r.priority] ?? PR.MEDIUM).color, background: (PR[r.priority] ?? PR.MEDIUM).bg }}>{r.priority ?? 'MEDIUM'}</span></td>
                     <td style={r.overdue ? { color: '#ef4444', fontWeight: 600 } : undefined}>{r.plannedEndDate ? new Date(r.plannedEndDate).toLocaleDateString() : '-'}</td>
                     <td style={r.overdue ? { color: '#ef4444', fontWeight: 600 } : undefined}>{r.daysPending}d{r.overdue ? ' (OVERDUE)' : ''}</td>

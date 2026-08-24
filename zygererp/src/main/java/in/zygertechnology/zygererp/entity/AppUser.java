@@ -1,10 +1,14 @@
 package in.zygertechnology.zygererp.entity;
 
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity @Table(name="app_users") @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class AppUser {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
     @Column(unique = true, nullable = false, length = 80) String username;
@@ -21,4 +25,12 @@ public class AppUser {
     Instant createdAt;
     String updatedBy;
     Instant updatedAt;
+
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(
+        name = "user_roles",
+        joinColumns = @JoinColumn(name = "user_id"),
+        inverseJoinColumns = @JoinColumn(name = "role_id")
+    )
+    @Builder.Default Set<Role> roles = new HashSet<>();
 }

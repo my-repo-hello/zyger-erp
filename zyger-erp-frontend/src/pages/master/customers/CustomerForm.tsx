@@ -34,6 +34,17 @@ export default function CustomerForm({ customerId, viewOnly = false, onBack, onS
     } catch { /* ignore */ }
   };
 
+  const openNew = async () => {
+    setForm(defaultForm());
+    setEditId(null);
+    try {
+      const { data } = await apiClient.get('/master/parties/next-code?kind=CUSTOMER');
+      setForm((c) => ({ ...c, code: data.code }));
+    } catch {
+      setForm((c) => ({ ...c, code: 'CUS-0004' }));
+    }
+  };
+
   useEffect(() => {
     loadSummaryList();
     if (!customerId) {
@@ -52,17 +63,6 @@ export default function CustomerForm({ customerId, viewOnly = false, onBack, onS
       onBack();
     }).finally(() => setLoading(false));
   }, [customerId]);
-
-  const openNew = async () => {
-    setForm(defaultForm());
-    setEditId(null);
-    try {
-      const { data } = await apiClient.get('/master/parties/next-code?kind=CUSTOMER');
-      setForm((c) => ({ ...c, code: data.code }));
-    } catch {
-      setForm((c) => ({ ...c, code: 'CUS-0004' }));
-    }
-  };
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
 

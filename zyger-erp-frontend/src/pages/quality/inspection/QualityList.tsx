@@ -6,6 +6,7 @@ import { getApiErrorMessage } from '../../../utils/apiError';
 import { useToast } from '../../../contexts/ToastContext';
 import StatusBadge from '../../../components/common/StatusBadge';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import { exportToCsv } from '../../../utils/csvExport';
 
 const PAGE_SIZE = 8;
 
@@ -178,6 +179,31 @@ export default function QualityList({ onAdd, onEdit, onView, defaultStatus = '',
               onChange={(event) => setSearchInput(event.target.value)}
             />
           </div>
+
+          <button
+            className="ibtn"
+            title="Export CSV"
+            onClick={() =>
+              exportToCsv(
+                rows as unknown as Record<string, unknown>[],
+                COLUMNS.map((c) => ({
+                  key: String(c.field),
+                  label: c.label,
+                  render: (value: unknown, row: InspectionListRowDto) =>
+                    c.field === 'inspectionDate'
+                      ? formatDate(row.inspectionDate)
+                      : c.field === 'inspectionType'
+                        ? TYPE_LABELS[row.inspectionType] ?? String(row.inspectionType ?? '')
+                        : c.field === 'itemCode'
+                          ? row.itemCode || ''
+                          : String(value ?? ''),
+                })),
+                'quality-inspections'
+              )
+            }
+          >
+            <span className="material-symbols-rounded">download</span>
+          </button>
 
           <select
             className="in"

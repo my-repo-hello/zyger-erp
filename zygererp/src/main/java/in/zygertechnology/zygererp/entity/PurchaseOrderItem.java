@@ -10,6 +10,8 @@ public class PurchaseOrderItem extends BaseLine implements LineEntity {
     @Column(name = "drawing_number", length = 60) String drawingNumber;
     @Column(name = "drawing_revision", length = 30) String drawingRevision;
     @Column(name = "material_grade", length = 60) String materialGrade;
+    @Column(name = "material_certificate_required") Boolean materialCertificateRequired = false;
+    @Column(name = "heat_number_required") Boolean heatNumberRequired = false;
     String size;
     @Column(name = "order_qty") BigDecimal orderQty;
     @Column(length = 30) String uom;

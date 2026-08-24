@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   usePlanningDoc,
   usePlanningDocAction,
@@ -13,9 +13,13 @@ import type { MaterialLineDef } from '../planningDocConfigs';
 import { formatDate, formatNumber, toOptionalNumber } from '../../../utils/format';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import StatusBadge from '../../../components/common/StatusBadge';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
+import { auditEntityTypeFor } from '../../../utils/auditEntity';
 import apiClient from '../../../api/axiosClient';
+import { exportToCsv } from '../../../utils/csvExport';
 
 const PAGE_SIZE = 8;
 const config = WORK_ORDER_CONFIG;
@@ -24,6 +28,7 @@ type ActionModal = { action: string; danger: boolean };
 
 export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { initialDocId?: string | number; viewOnly?: boolean }) {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [mode, setMode] = useState<'list' | 'form'>(initialDocId ? 'form' : 'list');
   const [documentId, setDocumentId] = useState<string | null>(initialDocId ? String(initialDocId) : null);
   const [isViewOnly, setIsViewOnly] = useState(viewOnly);
@@ -37,8 +42,24 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
   const [mats, setMats] = useState<Array<Record<string, unknown>>>([]);
   const [initializedForId, setInitializedForId] = useState('');
   const [actionModal, setActionModal] = useState<ActionModal | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'operations' | 'materials'>('operations');
   const [populating, setPopulating] = useState(false);
+  const [bomList, setBomList] = useState<Array<{ id: number; bomNumber: string; itemCode: string }>>([]);
+  const [routeList, setRouteList] = useState<Array<{ id: number; routeNumber: string; itemCode: string }>>([]);
+
+  const fetchPickers = useCallback(async () => {
+    try {
+      const [bRes, rRes] = await Promise.allSettled([
+        apiClient.get('/v1/planning/bom', { params: { size: 500 } }),
+        apiClient.get('/v1/planning/route-sheet', { params: { size: 500 } }),
+      ]);
+      if (bRes.status === 'fulfilled') setBomList((bRes.value.data?.content ?? bRes.value.data ?? []).map((b: any) => ({ id: b.id, bomNumber: b.bomNumber || b.docNo || `BOM-${b.id}`, itemCode: b.itemCode ?? '' })));
+      if (rRes.status === 'fulfilled') setRouteList((rRes.value.data?.content ?? rRes.value.data ?? []).map((r: any) => ({ id: r.id, routeNumber: r.routeNumber || r.docNo || `RT-${r.id}`, itemCode: r.itemCode ?? '' })));
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (mode === 'form') fetchPickers(); }, [mode, fetchPickers]);
 
   const listQuery = usePlanningDocList(config.docType, { page, size: PAGE_SIZE, sort: 'date,desc', search: search || undefined, status: status || undefined });
   const nextNumberQuery = usePlanningDocNextNumber(config.docType);
@@ -128,7 +149,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
     if (!documentId) return;
     setPopulating(true);
     try {
-      const res = await apiClient.post(`/api/v1/planning/work-order/${documentId}/populate`);
+      const res = await apiClient.post(`/v1/planning/work-order/${documentId}/populate`);
       const updated = res.data;
       setForm({ ...updated });
       setOps(Array.isArray(updated.lines) ? (updated.lines as Array<Record<string, unknown>>).map((l) => ({ ...l })) : []);
@@ -178,6 +199,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
       <div className="panel">
         <div className="toolbar">
           <div className="searchwrap"><span className="material-symbols-rounded">search</span><input className="in" value={searchInput} placeholder="Search..." onChange={(e) => setSearchInput(e.target.value)} /></div>
+          <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(rows as unknown as Record<string, unknown>[], config.columns.map((c) => ({ key: c.field, label: c.label })), config.docType)}><span className="material-symbols-rounded">download</span></button>
           <span className="count">{formatNumber(totalElements)} record{totalElements === 1 ? '' : 's'}</span>
           <select className="in" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All Status</option>
@@ -237,23 +259,45 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
 
       <form onSubmit={(e) => e.preventDefault()}>
         <div className="panel">
-          <div className="panel-h"><h2><span className="material-symbols-rounded">description</span> Header</h2>{documentId && <StatusBadge status={genericStatus} />}</div>
+          <div className="panel-h"><h2><span className="material-symbols-rounded">description</span> Header</h2>
+            {documentId && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <button type="button" className="btn btn-sm" title="Audit History" onClick={() => setAuditOpen(true)}>
+                  <span className="material-symbols-rounded">history</span> Audit
+                </button>
+                <StatusBadge status={genericStatus} />
+              </div>
+            )}
+          </div>
           <div className="fgrid">
-            {config.fields.map((field) => (
-              <label key={field.key} className={`fld ${field.span2 ? 'span2' : ''}`}>
-                <span>{field.label}</span>
-                {field.type === 'textarea' ? (
-                  <textarea className="in" rows={2} readOnly={!editable} value={String(form[field.key] ?? '')} onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))} />
-                ) : field.type === 'select' ? (
-                  <select className="in" disabled={!editable} value={String(form[field.key] ?? '')} onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))}>
-                    <option value="">\u2014 Select \u2014</option>
-                    {(field.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                ) : (
-                  <input className="in" type={field.type ?? 'text'} readOnly={!editable} value={String(form[field.key] ?? '')} onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))} />
-                )}
-              </label>
-            ))}
+            {config.fields.map((field) => {
+              const isBomOrRoute = field.key === 'bomId' || field.key === 'routeId';
+              const pickerOptions = field.key === 'bomId'
+                ? bomList.map((b) => `${b.id}`)
+                : field.key === 'routeId'
+                  ? routeList.map((r) => `${r.id}`)
+                  : (field.options ?? []);
+              const pickerLabels = field.key === 'bomId'
+                ? bomList.map((b) => `${b.bomNumber} — ${b.itemCode}`)
+                : field.key === 'routeId'
+                  ? routeList.map((r) => `${r.routeNumber} — ${r.itemCode}`)
+                  : pickerOptions;
+              return (
+                <label key={field.key} className={`fld ${field.span2 ? 'span2' : ''}`}>
+                  <span>{field.label}</span>
+                  {field.type === 'textarea' ? (
+                    <textarea className="in" rows={2} readOnly={!editable} value={String(form[field.key] ?? '')} onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))} />
+                  ) : (field.type === 'select' || isBomOrRoute) ? (
+                    <select className="in" disabled={!editable} value={String(form[field.key] ?? '')} onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))}>
+                      <option value="">\u2014 Select \u2014</option>
+                      {pickerOptions.map((o, i) => <option key={o} value={o}>{pickerLabels[i] ?? o}</option>)}
+                    </select>
+                  ) : (
+                    <input className="in" type={field.type ?? 'text'} readOnly={!editable} value={String(form[field.key] ?? '')} onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))} />
+                  )}
+                </label>
+              );
+            })}
           </div>
         </div>
 
@@ -306,22 +350,23 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
                 {genericStatus !== 'DRAFT' && <button type="button" className="btn" onClick={() => runAction('reopen')} disabled={isBusy}><span className="material-symbols-rounded">restart_alt</span> Reopen</button>}
               </>
             )}
-            {documentId && !isViewOnly && genericStatus === 'DRAFT' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'submit', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">send</span> Submit</button>}
+            {documentId && !isViewOnly && genericStatus === 'DRAFT' && can('planning', 'Edit') && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'submit', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">send</span> Submit</button>}
             {documentId && !isViewOnly && genericStatus === 'SUBMITTED' && (
               <>
-                <button type="button" className="btn btn-g" onClick={() => setActionModal({ action: 'approve', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">thumb_up</span> Approve</button>
-                <button type="button" className="btn btn-d" onClick={() => setActionModal({ action: 'reject', danger: true })} disabled={isBusy}><span className="material-symbols-rounded">thumb_down</span> Reject</button>
+                {can('planning', 'Approve') && <button type="button" className="btn btn-g" onClick={() => setActionModal({ action: 'approve', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">thumb_up</span> Approve</button>}
+                {can('planning', 'Reject') && <button type="button" className="btn btn-d" onClick={() => setActionModal({ action: 'reject', danger: true })} disabled={isBusy}><span className="material-symbols-rounded">thumb_down</span> Reject</button>}
               </>
             )}
             {documentId && !isViewOnly && genericStatus === 'APPROVED' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'release', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">rocket_launch</span> Release</button>}
             {documentId && !isViewOnly && genericStatus === 'RELEASED' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'start', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">play_arrow</span> Start</button>}
             {documentId && !isViewOnly && genericStatus === 'IN_PROCESS' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'complete', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">check_circle</span> Complete</button>}
             {documentId && !isViewOnly && genericStatus === 'COMPLETED' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'close', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">lock</span> Close</button>}
-            {documentId && !isViewOnly && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(genericStatus) && <button type="button" className="btn btn-d" onClick={() => setActionModal({ action: 'cancel', danger: true })} disabled={isBusy}><span className="material-symbols-rounded">block</span> Cancel</button>}
+            {documentId && !isViewOnly && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(genericStatus) && can('planning', 'Cancel') && <button type="button" className="btn btn-d" onClick={() => setActionModal({ action: 'cancel', danger: true })} disabled={isBusy}><span className="material-symbols-rounded">block</span> Cancel</button>}
           </div>
         </div>
       </form>
       <ConfirmActionModal open={Boolean(actionModal)} title={`${actionModal?.action ?? ''} ${docNo}`} body={actionModal?.action === 'approve' ? 'Approve this work order?' : actionModal?.action === 'release' ? 'Release this work order for production?' : actionModal?.action === 'start' ? 'Start production on this work order?' : actionModal?.action === 'complete' ? 'Mark this work order as completed?' : actionModal?.action === 'close' ? 'Close this work order? This cannot be undone.' : actionModal?.action === 'reject' ? 'Reason for rejection:' : actionModal?.action === 'cancel' ? 'Cancel this work order?' : 'Submit for review?'} okLabel={actionModal ? actionModal.action.charAt(0).toUpperCase() + actionModal.action.slice(1) : 'Confirm'} danger={actionModal?.danger} busy={actionMutation.isPending} onClose={() => setActionModal(null)} onConfirm={(note: string) => actionModal && runAction(actionModal.action, note)} />
+      <AuditHistoryDrawer open={auditOpen} entityType={auditEntityTypeFor(config.docType)} entityId={documentId ?? undefined} onClose={() => setAuditOpen(false)} />
     </>
   );
 }

@@ -8,4 +8,5 @@ public interface ProductionEntryRepository extends JpaRepository<ProductionEntry
     List<ProductionEntry> findByWorkOrderNumber(String workOrderNumber);
     List<ProductionEntry> findByJobCardNumber(String jobCardNumber);
     List<ProductionEntry> findByStatus(String status);
+    long countByStatus(String status);
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   usePurchaseDoc,
   usePurchaseDocAction,
@@ -14,10 +15,13 @@ import { getApiErrorMessage } from '../../utils/apiError';
 import { useToast } from '../../contexts/ToastContext';
 import StatusBadge from '../../components/common/StatusBadge';
 import ConfirmActionModal from '../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../components/common/AuditHistoryDrawer';
+import { auditEntityTypeFor } from '../../utils/auditEntity';
 import axiosClient from '../../api/axiosClient';
 import { purchaseApi } from '../../services/purchase-api';
 import { lookupDocumentByNumber } from '../../utils/documentLookup';
 import { logSystemActivity } from '../../utils/activityLog';
+import { exportToCsv } from '../../utils/csvExport';
 
 const PAGE_SIZE = 10;
 
@@ -39,6 +43,7 @@ type ActionModal = { action: 'submit' | 'approve' | 'reject' | 'reopen' | 'cance
 
 export default function PurchaseDocScreen({ config, initialDocId, viewOnly = false, defaultType, prefill }: PurchaseDocScreenProps) {
   const { toast } = useToast();
+  const { user, can } = useAuth();
   const { docType } = config;
 
   const [mode, setMode] = useState<'list' | 'form'>(initialDocId ? 'form' : 'list');
@@ -55,6 +60,7 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
   const [lines, setLines] = useState<Array<Record<string, unknown>>>([]);
   const [initializedForId, setInitializedForId] = useState('');
   const [actionModal, setActionModal] = useState<ActionModal | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   // Master dropdown data
   const [supplierMasters, setSupplierMasters] = useState<Array<{ id: number; name: string; code: string; contactPerson?: string; phone?: string; email?: string }>>([]);
@@ -67,33 +73,16 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
   useEffect(() => {
     axiosClient.get('/master/company-info').then((res) => {
       if (res.data && Object.keys(res.data).length > 0) setCompanyInfoMaster(res.data);
-      else setCompanyInfoMaster({
-        companyName: 'Zyger ERP',
-        registeredAddress: 'Phase III, GIDC Auto Cluster',
-        deliveryAddress: 'Phase III, GIDC Auto Cluster',
-        city: 'Rajkot',
-        state: 'Gujarat',
-        pincode: '360002',
-      });
-    }).catch(() => {
-      setCompanyInfoMaster({
-        companyName: 'Zyger ERP',
-        registeredAddress: 'Phase III, GIDC Auto Cluster',
-        deliveryAddress: 'Phase III, GIDC Auto Cluster',
-        city: 'Rajkot',
-        state: 'Gujarat',
-        pincode: '360002',
-      });
-    });
+    }).catch(() => {});
   }, []);
 
   const getCompanyAddress = (isShipping = false) => {
-    if (!companyInfoMaster) return 'Phase III, GIDC Auto Cluster, Rajkot, Gujarat - 360002';
+    if (!companyInfoMaster) return 'Company address not configured. Please set up Company Info in Master.';
     const street = isShipping
       ? (companyInfoMaster.deliveryAddress || companyInfoMaster.registeredAddress || '')
       : (companyInfoMaster.registeredAddress || companyInfoMaster.deliveryAddress || '');
     const parts = [street, companyInfoMaster.city, companyInfoMaster.state, companyInfoMaster.pincode].filter(Boolean);
-    return parts.length > 0 ? parts.join(', ') : 'Phase III, GIDC Auto Cluster, Rajkot, Gujarat - 360002';
+    return parts.length > 0 ? parts.join(', ') : 'Company address not configured. Please set up Company Info in Master.';
   };
 
   // Reference document options for Select Options header fields
@@ -808,8 +797,8 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
         module: 'Purchase',
         activity: `${config.title} (${savedRes?.docNo || form.docNo || 'Document'})`,
         refNo: savedRes?.docNo || form.docNo || '',
-        party: form.supplier || form.party || 'Supplier',
-        user: user?.username || 'Sanjai M',
+        party: String(form.supplier || form.party || 'Supplier'),
+        user: user?.username || 'Unknown',
         status: savedRes?.status || 'RELEASED',
       });
 
@@ -871,6 +860,19 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
                 style={{ width: '250px' }}
               />
             </div>
+            <button
+              className="ibtn"
+              title="Export CSV"
+              onClick={() =>
+                exportToCsv(
+                  rows as unknown as Record<string, unknown>[],
+                  config.columns.map((c) => ({ key: c.field, label: c.label })),
+                  config.docType
+                )
+              }
+            >
+              <span className="material-symbols-rounded">download</span>
+            </button>
             <select
               className="in"
               value={status}
@@ -1047,6 +1049,16 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
         </div>
 
         <div style={{ display: 'flex', gap: '8px' }}>
+          {documentId && (
+            <button
+              onClick={() => setAuditOpen(true)}
+              className="btn btn-sm"
+              title="Audit History"
+            >
+              <span className="material-symbols-rounded">history</span>
+              Audit
+            </button>
+          )}
           {editable && (
             <button
               onClick={() => handleSave()}
@@ -1066,7 +1078,7 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
               Submit
             </button>
           )}
-          {documentId && String(form.status) === 'SUBMITTED' && (
+          {documentId && String(form.status) === 'SUBMITTED' && can('purchase', 'Approve') && (
             <>
               <button
                 onClick={() => setActionModal({ action: 'approve', danger: false })}
@@ -1094,7 +1106,7 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
               Reopen
             </button>
           )}
-          {documentId && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(String(form.status)) && (
+          {documentId && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(String(form.status)) && can('purchase', 'Cancel') && (
             <button
               onClick={() => setActionModal({ action: 'cancel', danger: true })}
               className="btn"
@@ -1421,6 +1433,8 @@ export default function PurchaseDocScreen({ config, initialDocId, viewOnly = fal
           onClose={() => setActionModal(null)}
         />
       )}
+
+      <AuditHistoryDrawer open={auditOpen} entityType={auditEntityTypeFor(docType)} entityId={documentId ?? undefined} onClose={() => setAuditOpen(false)} />
     </div>
   );
 }

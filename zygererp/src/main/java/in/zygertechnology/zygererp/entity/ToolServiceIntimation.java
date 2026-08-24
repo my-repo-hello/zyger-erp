@@ -50,6 +50,9 @@ public class ToolServiceIntimation {
     @Column(length = 20)
     private String priority;
 
+    @Column(name = "plant_id")
+    private Long plantId;
+
     @Column(length = 120)
     private String vendor;
 

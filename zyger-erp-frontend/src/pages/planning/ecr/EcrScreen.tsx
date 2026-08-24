@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
 
@@ -62,6 +63,7 @@ const ACTIONABLE_STATUSES: Record<string, { label: string; action: string; icon:
 
 export default function EcrScreen() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [rows, setRows] = useState<Ecr[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -247,7 +249,8 @@ export default function EcrScreen() {
                   <tr><td colSpan={7}><div className="empty"><span className="material-symbols-rounded">description</span> No ECRs found.</div></td></tr>
                 ) : rows.map((r) => {
                   const priorityInfo = PRIORITIES.find((p) => p.value === r.priority);
-                  const actions = ACTIONABLE_STATUSES[r.status] ?? [];
+                  const actions = (ACTIONABLE_STATUSES[r.status] ?? []).filter((a) =>
+                    a.action === 'approve' ? can('planning', 'Approve') : a.action === 'reject' ? can('planning', 'Reject') : true);
                   const sc = STATUS_COLORS[r.status] ?? { color: '#888', bg: '#e9ecef' };
                   return (
                     <tr key={r.id}>

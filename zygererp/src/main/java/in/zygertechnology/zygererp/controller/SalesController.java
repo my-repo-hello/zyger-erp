@@ -4,6 +4,7 @@ import in.zygertechnology.zygererp.service.DocumentFacade;
 import in.zygertechnology.zygererp.service.ExportService;
 import in.zygertechnology.zygererp.service.PrintService;
 import in.zygertechnology.zygererp.service.SalesService;
+import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -15,6 +16,7 @@ import java.util.*;
 
 @RestController
 @RequestMapping("/api/v1/sales")
+@RequirePermission(module = "SALES", screen = "*", action = "VIEW")
 @RequiredArgsConstructor
 public class SalesController {
 
@@ -70,9 +72,10 @@ public class SalesController {
 
     @PostMapping("/{type}/{id}/actions/{action}")
     Map<String, Object> act(@PathVariable String type, @PathVariable Long id, @PathVariable String action,
-                            @RequestBody(required = false) Map<String, String> b, Principal p) {
-        return svc.toRow(sales.action(key(type), id, action,
-                b == null ? "" : b.getOrDefault("note", ""), principalName(p)));
+                            @RequestBody(required = false) Map<String, Object> b, Principal p) {
+        Map<String, Object> opts = b == null ? Map.of() : b;
+        String note = String.valueOf(opts.getOrDefault("note", ""));
+        return svc.toRow(sales.action(key(type), id, action, note, principalName(p), opts));
     }
 
     @GetMapping("/{type}/export")

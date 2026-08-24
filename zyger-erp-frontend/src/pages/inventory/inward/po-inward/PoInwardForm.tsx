@@ -10,8 +10,9 @@ import { toNumber } from '../../../../utils/format';
 import { logSystemActivity } from '../../../../utils/activityLog';
 import StatusBadge from '../../../../components/common/StatusBadge';
 import ConfirmActionModal from '../../../../components/common/ConfirmActionModal';
-import type { PoInwardDto } from '../../../../types/inventory/poInward.types';
+import type { PoInwardDto, DocumentAction } from '../../../../types/inventory/poInward.types';
 import type { ItemMasterDto } from '../../../../types/master.types';
+import { lookupDocumentByNumber } from '../../../../utils/documentLookup';
 import {
   buildPayload,
   createEmptyForm,
@@ -182,7 +183,7 @@ export default function PoInwardForm({
         setForm((prev) => ({ ...prev, supplier: supplierValue }));
       }
 
-      void lookupDocumentByNumber('purchase-order', value).then((doc) => {
+      void lookupDocumentByNumber('purchase-order', value).then((doc: any) => {
         if (!doc) return;
         const supp = doc.supplier || doc.party;
         if (supp) {
@@ -312,7 +313,7 @@ export default function PoInwardForm({
     }
 
     try {
-      let targetId = documentId ?? currentDocument?.id ?? null;
+      const targetId = documentId ?? currentDocument?.id ?? null;
 
       if (targetId && status === 'REJECTED') {
         await actionMutation.mutateAsync({
@@ -367,7 +368,7 @@ export default function PoInwardForm({
         activity: `PO Inward Entry (${saved.docNo || 'Document'})`,
         refNo: saved.docNo || '',
         party: form.supplier || 'Supplier',
-        user: user?.username || 'Sanjai M',
+        user: user?.username || 'Unknown',
         status: saved.status || (submit ? 'SUBMITTED' : 'DRAFT'),
       });
 

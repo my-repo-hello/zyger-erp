@@ -3,6 +3,7 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import StatusBadge from '../../../components/common/StatusBadge';
 
 interface RCA {
   id: number; rcaNumber: string; machineCode: string; breakdownId: number; breakdownNumber: string;
@@ -131,7 +132,7 @@ export default function RootCauseAnalysisScreen() {
                       <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.rootCause ?? '-'}</td>
                       <td>{r.responsiblePerson ?? '-'}</td>
                       <td>{r.targetDate ?? '-'}</td>
-                      <td><span style={{ padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 600, color: (SC[r.status] ?? SC.OPEN).color, background: (SC[r.status] ?? SC.OPEN).bg }}>{r.status}</span></td>
+                      <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td style={{ position: 'relative' }}>
                         <button className="ibtn" onClick={(e) => { e.stopPropagation(); setOpenActionMenu(openActionMenu === r.id ? null : r.id); }}>
                           <span className="material-symbols-rounded">more_vert</span>

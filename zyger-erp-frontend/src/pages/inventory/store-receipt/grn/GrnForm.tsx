@@ -176,6 +176,7 @@ export default function GrnForm({
               itemCode: l.itemCode,
               itemDesc: l.itemDesc || item?.description || '',
               uom: l.uom || item?.uom || '',
+              inspectedQty: qty,
               acceptedQty: qty,
               rejectedQty: '0',
               rate,
@@ -282,6 +283,7 @@ export default function GrnForm({
             itemCode: l.itemCode,
             itemDesc: l.itemDesc || itemsMap.get(l.itemCode)?.description || l.description || '',
             uom: l.uom || itemsMap.get(l.itemCode)?.uom || 'PCS',
+            inspectedQty: String(l.qty || l.orderQty || l.receivedQty || ''),
             acceptedQty: String(l.qty || l.orderQty || l.receivedQty || ''),
             rate: String(l.rate || l.unitPrice || ''),
             amount: String(toNumber(l.qty || l.orderQty || 0) * toNumber(l.rate || l.unitPrice || 0)),
@@ -323,7 +325,7 @@ export default function GrnForm({
     }
 
     try {
-      let targetId = documentId ?? currentDocument?.id ?? null;
+      const targetId = documentId ?? currentDocument?.id ?? null;
 
       if (targetId && status === 'REJECTED') {
         await actionMutation.mutateAsync({
@@ -690,6 +692,7 @@ export default function GrnForm({
                   <th>Item Code *</th>
                   <th>Item Name</th>
                   <th>UOM</th>
+                  <th>Inspected Qty</th>
                   <th>Accepted Qty *</th>
                   <th>Rate</th>
                   <th>Amount</th>
@@ -738,6 +741,19 @@ export default function GrnForm({
                         value={line.uom}
                         readOnly
                         tabIndex={-1}
+                      />
+                    </td>
+
+                    <td>
+                      <input
+                        type="number"
+                        step="any"
+                        className="in"
+                        value={line.inspectedQty}
+                        readOnly={!editable}
+                        onChange={(event) =>
+                          updateLine(index, 'inspectedQty', event.target.value)
+                        }
                       />
                     </td>
 

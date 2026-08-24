@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import {
   useSalesDoc,
   useSalesDocAction,
@@ -14,10 +15,13 @@ import { getApiErrorMessage } from '../../utils/apiError';
 import { useToast } from '../../contexts/ToastContext';
 import StatusBadge from '../../components/common/StatusBadge';
 import ConfirmActionModal from '../../components/common/ConfirmActionModal';
+import AuditHistoryDrawer from '../../components/common/AuditHistoryDrawer';
+import { auditEntityTypeFor } from '../../utils/auditEntity';
 import axiosClient from '../../api/axiosClient';
 import { salesApi } from '../../services/sales-api';
 import { lookupDocumentByNumber } from '../../utils/documentLookup';
 import { logSystemActivity } from '../../utils/activityLog';
+import { exportToCsv } from '../../utils/csvExport';
 
 const PAGE_SIZE = 10;
 
@@ -32,6 +36,7 @@ type ActionModal = { action: 'submit' | 'approve' | 'reject' | 'reopen' | 'cance
 
 export default function SalesDocScreen({ config, initialDocId, viewOnly = false, defaultType }: SalesDocScreenProps) {
   const { toast } = useToast();
+  const { user, can } = useAuth();
   const { docType } = config;
 
   const [mode, setMode] = useState<'list' | 'form'>(initialDocId ? 'form' : 'list');
@@ -48,6 +53,7 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
   const [lines, setLines] = useState<Array<Record<string, unknown>>>([]);
   const [initializedForId, setInitializedForId] = useState('');
   const [actionModal, setActionModal] = useState<ActionModal | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   // Master dropdown data
   const [customerMasters, setCustomerMasters] = useState<Array<{ id: number; name: string; code: string; billingAddress?: string; shippingAddress?: string; address?: string; city?: string; state?: string; pincode?: string; addressesJson?: string; deliveryAddressesJson?: string }>>([]);
@@ -549,8 +555,8 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
 
     if (Array.isArray(selectedInvoice.lines) && selectedInvoice.lines.length > 0) {
       setLines(selectedInvoice.lines.map((l: any, i: number) => {
-        let batchNumber = '';
-        let heatNumber = '';
+        let batchNumber: string;
+        let heatNumber: string;
         if (l.batchHeatNumber) {
           const parts = String(l.batchHeatNumber).split('/');
           batchNumber = parts[0]?.trim() || '';
@@ -559,7 +565,7 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
           batchNumber = l.batchNumber || l.batchNo || '';
           heatNumber = l.heatNumber || l.heatNo || '';
         }
-        
+
         const qty = Number(l.billedQty ?? l.qty ?? 0);
         const price = Number(l.unitPrice ?? l.rate ?? 0);
         const baseNet = qty * price;
@@ -653,8 +659,8 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
 
     if (Array.isArray(selectedInvoice.lines) && selectedInvoice.lines.length > 0) {
       setLines(selectedInvoice.lines.map((l: any, i: number) => {
-        let batchNumber = '';
-        let heatNumber = '';
+        let batchNumber: string;
+        let heatNumber: string;
         if (l.batchHeatNumber) {
           const parts = String(l.batchHeatNumber).split('/');
           batchNumber = parts[0]?.trim() || '';
@@ -663,7 +669,7 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
           batchNumber = l.batchNumber || l.batchNo || '';
           heatNumber = l.heatNumber || l.heatNo || '';
         }
-        
+
         const qty = Number(l.billedQty ?? l.qty ?? 0);
         const price = Number(l.unitPrice ?? l.rate ?? 0);
         
@@ -818,8 +824,8 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
         module: 'Sales',
         activity: `${config.title} (${savedRes?.docNo || form.docNo || 'Document'})`,
         refNo: savedRes?.docNo || form.docNo || '',
-        party: form.customer || form.party || 'Customer',
-        user: user?.username || 'Sanjai M',
+        party: String(form.customer || form.party || 'Customer'),
+        user: user?.username || 'Unknown',
         status: savedRes?.status || 'APPROVED',
       });
 
@@ -881,6 +887,19 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
                 style={{ width: '250px' }}
               />
             </div>
+            <button
+              className="ibtn"
+              title="Export CSV"
+              onClick={() =>
+                exportToCsv(
+                  rows as unknown as Record<string, unknown>[],
+                  config.columns.map((c) => ({ key: c.field, label: c.label })),
+                  config.docType
+                )
+              }
+            >
+              <span className="material-symbols-rounded">download</span>
+            </button>
             <select
               className="in"
               value={status}
@@ -1057,6 +1076,16 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
         </div>
 
         <div style={{ display: 'flex', gap: '8px' }}>
+          {documentId && (
+            <button
+              onClick={() => setAuditOpen(true)}
+              className="btn btn-sm"
+              title="Audit History"
+            >
+              <span className="material-symbols-rounded">history</span>
+              Audit
+            </button>
+          )}
           {editable && (
             <button
               onClick={() => handleSave()}
@@ -1076,7 +1105,7 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
               Submit
             </button>
           )}
-          {documentId && String(form.status) === 'SUBMITTED' && (
+          {documentId && String(form.status) === 'SUBMITTED' && can('sales', 'Approve') && (
             <button
               onClick={() => setActionModal({ action: 'approve', danger: false })}
               className="btn btn-p"
@@ -1405,6 +1434,8 @@ export default function SalesDocScreen({ config, initialDocId, viewOnly = false,
           onClose={() => setActionModal(null)}
         />
       )}
+
+      <AuditHistoryDrawer open={auditOpen} entityType={auditEntityTypeFor(docType)} entityId={documentId ?? undefined} onClose={() => setAuditOpen(false)} />
     </div>
   );
 }
