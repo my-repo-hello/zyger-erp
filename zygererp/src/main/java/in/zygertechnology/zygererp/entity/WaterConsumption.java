@@ -5,11 +5,13 @@ import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "water_consumption")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class WaterConsumption {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)

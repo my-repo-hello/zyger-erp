@@ -2,6 +2,7 @@ package in.zygertechnology.zygererp.config;
 
 import in.zygertechnology.zygererp.entity.*;
 import in.zygertechnology.zygererp.repo.*;
+import in.zygertechnology.zygererp.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -18,6 +19,7 @@ public class DataSeeder implements CommandLineRunner {
     private final PartyRepository parties; private final LocationRepository locs;
     private final RefDocRepository refs; private final PasswordEncoder enc;
     private final RoleRepository roles; private final PermissionRepository permissions;
+    private final EscalationRuleRepository escRuleRepo;
 
     @Override
     public void run(String... args) {
@@ -188,6 +190,21 @@ public class DataSeeder implements CommandLineRunner {
         Role maintMgr = createAndSaveRole("MAINTENANCE_MANAGER", "Maintenance Manager - PM, analysis, cost");
         maintMgr.setPermissions(filterPerms(permMap, new String[]{"VIEW","CREATE","EDIT","APPROVE","REJECT","CANCEL","PRINT","EXPORT"}, new String[]{"MAINTENANCE","MASTER"}));
         roles.save(maintMgr);
+
+        // FRS §2.5: Seed default escalation rules
+        try {
+            if (escRuleRepo.count() == 0) {
+                escRuleRepo.saveAll(List.of(
+                    EscalationRule.builder().docKey("QUALITY_INSPECTION").priority("HIGH").slaHours(4).escalateToRole("QUALITY_MANAGER").notifyChannels("IN_APP").active(true).build(),
+                    EscalationRule.builder().docKey("QUALITY_NCR").priority("CRITICAL").slaHours(24).escalateToRole("QUALITY_MANAGER").notifyChannels("IN_APP").active(true).build(),
+                    EscalationRule.builder().docKey("QUALITY_CAPA").priority("CRITICAL").slaHours(72).escalateToRole("QUALITY_MANAGER").notifyChannels("IN_APP").active(true).build(),
+                    EscalationRule.builder().docKey("BREAKDOWN_INTIMATION").priority("HIGH").slaHours(2).escalateToRole("MAINTENANCE_MANAGER").notifyChannels("IN_APP").active(true).build(),
+                    EscalationRule.builder().docKey("BREAKDOWN_INTIMATION").priority("CRITICAL").slaHours(8).escalateToRole("MAINTENANCE_MANAGER").notifyChannels("IN_APP").active(true).build(),
+                    EscalationRule.builder().docKey("PM_COMPLETION").priority("HIGH").slaHours(48).escalateToRole("MAINTENANCE_MANAGER").notifyChannels("IN_APP").active(true).build(),
+                    EscalationRule.builder().docKey("CALIBRATION_ENTRY").priority("HIGH").slaHours(24).escalateToRole("QUALITY_MANAGER").notifyChannels("IN_APP").active(true).build()
+                ));
+            }
+        } catch (Exception ignored) {}
     }
 
     private Role createAndSaveRole(String name, String description) {

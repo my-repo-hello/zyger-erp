@@ -4,11 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "idle_time_entry")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class IdleTimeEntry {
 
     @Id
@@ -44,6 +46,12 @@ public class IdleTimeEntry {
 
     @Column(name = "idle_reason", length = 100)
     private String idleReason;
+
+    @Column(name = "idle_reason_id") Long idleReasonId;
+
+    @Column(name = "plant_id") Long plantId;
+
+    @Column(name = "subjob_number", length = 60) String subjobNumber;
 
     @Column(name = "work_order_number", length = 60)
     private String workOrderNumber;

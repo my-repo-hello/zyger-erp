@@ -24,7 +24,20 @@ import { exportToCsv } from '../../../utils/csvExport';
 const PAGE_SIZE = 8;
 const config = WORK_ORDER_CONFIG;
 
-type ActionModal = { action: string; danger: boolean };
+const STATUS_COLORS: Record<string, string> = {
+  DRAFT: '#6b7280',
+  SUBMITTED: '#3b82f6',
+  APPROVED: '#0ea5e9',
+  RELEASED: '#2563eb',
+  IN_PROCESS: '#f59e0b',
+  COMPLETED: '#10b981',
+  CLOSED: '#059669',
+  CANCELLED: '#ef4444',
+  ON_HOLD: '#eab308',
+  REJECTED: '#dc2626',
+};
+
+type ActionModal = { action: string; danger: boolean; title?: string };
 
 export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { initialDocId?: string | number; viewOnly?: boolean }) {
   const { toast } = useToast();
@@ -35,6 +48,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [priority, setPriority] = useState('');
   const [page, setPage] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<Record<string, unknown> | null>(null);
   const [form, setForm] = useState<Record<string, unknown>>({});
@@ -43,19 +57,30 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
   const [initializedForId, setInitializedForId] = useState('');
   const [actionModal, setActionModal] = useState<ActionModal | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
+  const [statusHistoryOpen, setStatusHistoryOpen] = useState(false);
+  const [statusHistory, setStatusHistory] = useState<Array<Record<string, unknown>>>([]);
   const [activeTab, setActiveTab] = useState<'operations' | 'materials'>('operations');
   const [populating, setPopulating] = useState(false);
   const [bomList, setBomList] = useState<Array<{ id: number; bomNumber: string; itemCode: string }>>([]);
   const [routeList, setRouteList] = useState<Array<{ id: number; routeNumber: string; itemCode: string }>>([]);
+  const [machines, setMachines] = useState<Array<{ code: string; name: string }>>([]);
+  const [workCenters, setWorkCenters] = useState<Array<{ code: string; name: string }>>([]);
+  const [operators, setOperators] = useState<Array<{ username: string; fullName: string }>>([]);
 
   const fetchPickers = useCallback(async () => {
     try {
-      const [bRes, rRes] = await Promise.allSettled([
+      const [bRes, rRes, mRes, wRes, oRes] = await Promise.allSettled([
         apiClient.get('/v1/planning/bom', { params: { size: 500 } }),
         apiClient.get('/v1/planning/route-sheet', { params: { size: 500 } }),
+        apiClient.get('/master/machines', { params: { size: 200 } }),
+        apiClient.get('/master/work-centers', { params: { size: 200 } }),
+        apiClient.get('/master/users', { params: { size: 200 } }),
       ]);
       if (bRes.status === 'fulfilled') setBomList((bRes.value.data?.content ?? bRes.value.data ?? []).map((b: any) => ({ id: b.id, bomNumber: b.bomNumber || b.docNo || `BOM-${b.id}`, itemCode: b.itemCode ?? '' })));
       if (rRes.status === 'fulfilled') setRouteList((rRes.value.data?.content ?? rRes.value.data ?? []).map((r: any) => ({ id: r.id, routeNumber: r.routeNumber || r.docNo || `RT-${r.id}`, itemCode: r.itemCode ?? '' })));
+      if (mRes.status === 'fulfilled') setMachines((mRes.value.data?.content ?? mRes.value.data ?? []).filter((m: any) => m.active !== false).map((m: any) => ({ code: m.machineCode ?? m.code ?? '', name: m.description ?? m.name ?? '' })));
+      if (wRes.status === 'fulfilled') setWorkCenters((wRes.value.data?.content ?? wRes.value.data ?? []).filter((w: any) => w.active !== false).map((w: any) => ({ code: w.code ?? '', name: w.name ?? '' })));
+      if (oRes.status === 'fulfilled') setOperators((oRes.value.data?.content ?? oRes.value.data ?? []).filter((u: any) => u.active !== false).map((u: any) => ({ username: (u.username ?? ''), fullName: (u.fullName || u.username) ?? '' })));
     } catch { /* ignore */ }
   }, []);
 
@@ -70,7 +95,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
   const actionMutation = usePlanningDocAction(config.docType);
 
   useEffect(() => { const t = setTimeout(() => setSearch(searchInput.trim()), 300); return () => clearTimeout(t); }, [searchInput]);
-  useEffect(() => { setPage(0); }, [search, status]);
+  useEffect(() => { setPage(0); }, [search, status, priority]);
   useEffect(() => { if (initialDocId) { setDocumentId(String(initialDocId)); setIsViewOnly(viewOnly); setMode('form'); } }, [initialDocId, viewOnly]);
 
   useEffect(() => {
@@ -123,7 +148,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
     if (errors.length > 0) { toast(errors[0], 'error'); return; }
     try {
       const created = await createMutation.mutateAsync(buildPayload());
-      toast(`Work Order ${created.docNo ?? ''} created as draft.`);
+      toast(`Work Order ${created.woNumber ?? created.docNo ?? ''} created as draft.`);
       setDocumentId(String(created.id ?? '')); setInitializedForId('');
     } catch (e) { toast(getApiErrorMessage(e, 'Create failed.'), 'error'); }
   };
@@ -132,7 +157,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
     if (!documentId) return;
     try {
       const updated = await updateMutation.mutateAsync({ id: documentId, payload: buildPayload() });
-      setForm({ ...updated }); toast(`${updated.docNo ?? ''} saved.`);
+      setForm({ ...updated }); toast(`${updated.woNumber ?? updated.docNo ?? ''} saved.`);
     } catch (e) { toast(getApiErrorMessage(e, 'Save failed.'), 'error'); }
   };
 
@@ -141,7 +166,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
     try {
       const updated = await actionMutation.mutateAsync({ id: documentId, action, note });
       setForm({ ...updated }); setActionModal(null);
-      toast(`${updated.docNo ?? ''} \u2022 ${action} completed.`);
+      toast(`${updated.woNumber ?? updated.docNo ?? ''} \u2022 ${action} completed.`);
     } catch (e) { toast(getApiErrorMessage(e, `${action} failed.`), 'error'); }
   };
 
@@ -159,10 +184,53 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
     setPopulating(false);
   };
 
+  const handlePrint = async () => {
+    if (!documentId) return;
+    try {
+      const res = await apiClient.get(`/v1/planning/work-order/${documentId}/print`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = window.document.createElement('a');
+      a.href = url;
+      a.download = `WO-${form.woNumber ?? form.docNo ?? documentId}.pdf`;
+      window.document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      window.document.body.removeChild(a);
+      toast('PDF downloaded.');
+    } catch (e) { toast(getApiErrorMessage(e, 'Print failed.'), 'error'); }
+  };
+
+  const fetchStatusHistory = async () => {
+    if (!documentId) return;
+    try {
+      const res = await apiClient.get(`/v1/planning/work-order/${documentId}/status-history`);
+      setStatusHistory(Array.isArray(res.data) ? res.data : []);
+      setStatusHistoryOpen(true);
+    } catch (e) { toast('Failed to load status history.', 'error'); }
+  };
+
   const cellValue = (row: Record<string, unknown>, field: string): string => {
     const raw = row[field]; if (raw == null) return '\u2014';
     if (typeof raw === 'number') return formatNumber(raw);
     const s = String(raw); if (/^\d{4}-\d{2}-\d{2}/.test(s)) return formatDate(s.slice(0, 10)); return s;
+  };
+
+  const isOverdue = (row: Record<string, unknown>): boolean => {
+    const pe = row.plannedEndDate;
+    const st = String(row.status ?? '');
+    if (!pe || ['COMPLETED', 'CLOSED', 'CANCELLED'].includes(st)) return false;
+    try { return new Date(String(pe)) < new Date(); } catch { return false; }
+  };
+
+  const isHighPriority = (row: Record<string, unknown>): boolean => {
+    const p = String(row.priority ?? '').toUpperCase();
+    return p === 'HIGH' || p === 'URGENT' || p === 'CRITICAL';
+  };
+
+  const dynamicLineOptions: Record<string, string[]> = {
+    machineCode: machines.map((m) => m.code),
+    workCenterCode: workCenters.map((w) => w.code),
+    operator: operators.map((o) => o.username),
   };
 
   const renderLineTable = (lineFields: MaterialLineDef[], data: Array<Record<string, unknown>>, setData: React.Dispatch<React.SetStateAction<Array<Record<string, unknown>>>>, editableLines: boolean) => (
@@ -172,18 +240,30 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
         <tbody>
           {data.map((line, idx) => (
             <tr key={idx}>
-              {lineFields.map((f) => (
-                <td key={f.key}>
-                  {f.type === 'select' ? (
-                    <select className="in" value={String(line[f.key] ?? '')} disabled={!editableLines} onChange={(e) => setData((c) => c.map((l, i) => (i === idx ? { ...l, [f.key]: e.target.value } : l)))}>
-                      <option value="">\u2014</option>
-                      {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                    </select>
-                  ) : (
-                    <input className="in" type={f.type ?? 'text'} readOnly={f.readonly || !editableLines} value={String(line[f.key] ?? '')} onChange={(e) => setData((c) => c.map((l, i) => (i === idx ? { ...l, [f.key]: e.target.value } : l)))} />
-                  )}
-                </td>
-              ))}
+              {lineFields.map((f) => {
+                const isDynamic = f.key in dynamicLineOptions;
+                const isSelect = f.type === 'select' || isDynamic;
+                const options = isDynamic ? dynamicLineOptions[f.key] : (f.options ?? []);
+                return (
+                  <td key={f.key}>
+                    {isSelect ? (
+                      <select className="in" value={String(line[f.key] ?? '')} disabled={!editableLines} onChange={(e) => setData((c) => c.map((l, i) => (i === idx ? { ...l, [f.key]: e.target.value } : l)))}>
+                        <option value="">\u2014</option>
+                        {options.map((o) => {
+                          if (isDynamic) {
+                            const label = f.key === 'operator' ? operators.find((op) => op.username === o)?.fullName || o : f.key === 'machineCode' ? machines.find((m) => m.code === o)?.name || o : workCenters.find((w) => w.code === o)?.name || o;
+                            return <option key={o} value={o}>{o} &mdash; {label}</option>;
+                          }
+                          return <option key={o} value={o}>{o}</option>;
+                        })}
+                        {isDynamic && Boolean(line[f.key]) && !options.includes(String(line[f.key])) && <option value={String(line[f.key])}>{String(line[f.key])}</option>}
+                      </select>
+                    ) : (
+                      <input className="in" type={f.type ?? 'text'} readOnly={f.readonly || !editableLines} value={String(line[f.key] ?? '')} onChange={(e) => setData((c) => c.map((l, i) => (i === idx ? { ...l, [f.key]: e.target.value } : l)))} />
+                    )}
+                  </td>
+                );
+              })}
               {editableLines && <td><button type="button" className="ibtn danger" disabled={isBusy} onClick={() => setData((c) => c.filter((_, i) => i !== idx))}><span className="material-symbols-rounded">delete</span></button></td>}
             </tr>
           ))}
@@ -192,41 +272,66 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
     </div>
   );
 
+  const filteredRows = useMemo(() => {
+    if (!priority) return rows;
+    return rows.filter((r: Record<string, unknown>) => String(r.priority ?? '').toUpperCase() === priority);
+  }, [rows, priority]);
+
   const listBody = useMemo(() => {
     if (listQuery.isPending) return <div className="panel"><div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading Work Orders...</div></div>;
     if (listQuery.isError) return <div className="panel"><div className="empty"><span className="material-symbols-rounded">error</span>{getApiErrorMessage(listQuery.error, 'Load failed.')}<div style={{ marginTop: '14px' }}><button className="btn" onClick={() => listQuery.refetch()}><span className="material-symbols-rounded">refresh</span> Retry</button></div></div></div>;
     return (
       <div className="panel">
         <div className="toolbar">
-          <div className="searchwrap"><span className="material-symbols-rounded">search</span><input className="in" value={searchInput} placeholder="Search..." onChange={(e) => setSearchInput(e.target.value)} /></div>
-          <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(rows as unknown as Record<string, unknown>[], config.columns.map((c) => ({ key: c.field, label: c.label })), config.docType)}><span className="material-symbols-rounded">download</span></button>
+          <div className="searchwrap"><span className="material-symbols-rounded">search</span><input className="in" value={searchInput} placeholder="Search WO, SO, Item..." onChange={(e) => setSearchInput(e.target.value)} /></div>
+          <button className="ibtn" title="Export CSV" onClick={() => exportToCsv(filteredRows as unknown as Record<string, unknown>[], config.columns.map((c) => ({ key: c.field, label: c.label })), config.docType)}><span className="material-symbols-rounded">download</span></button>
           <span className="count">{formatNumber(totalElements)} record{totalElements === 1 ? '' : 's'}</span>
           <select className="in" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All Status</option>
-            {config.statusOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+            {config.statusOptions.map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+          </select>
+          <select className="in" value={priority} onChange={(e) => setPriority(e.target.value)}>
+            <option value="">All Priority</option>
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Normal</option>
+            <option value="HIGH">High</option>
+            <option value="URGENT">Urgent</option>
           </select>
           <div className="sp" />
-          <button className="btn btn-p" onClick={() => openForm(null, false)}><span className="material-symbols-rounded">add</span> Add</button>
+          <button className="btn btn-p" onClick={() => openForm(null, false)}><span className="material-symbols-rounded">add</span> New Work Order</button>
         </div>
         <div className="twrap">
           <table className="tbl">
             <thead><tr>{config.columns.map((c) => <th key={c.field} className={c.numeric ? 'num' : ''}>{c.label}</th>)}<th>Actions</th></tr></thead>
             <tbody>
-              {rows.length > 0 ? rows.map((row: Record<string, unknown>) => (
-                <tr key={String(row.id)}>
-                  {config.columns.map((c) => <td key={c.field} className={c.numeric ? 'num' : ''}>{c.field === config.statusField ? <StatusBadge status={String(row[c.field] ?? 'DRAFT')} /> : cellValue(row, c.field)}</td>)}
+              {filteredRows.length > 0 ? filteredRows.map((row: Record<string, unknown>) => {
+                const overdue = isOverdue(row);
+                const highP = isHighPriority(row);
+                const rowStyle: React.CSSProperties = overdue ? { background: '#fef2f2' } : highP ? { background: '#fffbeb' } : {};
+                return (
+                <tr key={String(row.id)} style={rowStyle}>
+                  {config.columns.map((c) => {
+                    if (c.field === 'status') return <td key={c.field}><span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 600, color: '#fff', background: STATUS_COLORS[String(row[c.field] ?? 'DRAFT')] ?? '#6b7280' }}>{String(row[c.field] ?? 'DRAFT').replace('_', ' ')}</span></td>;
+                    if (c.field === 'priority') {
+                      const p = String(row[c.field] ?? '');
+                      const pc = p === 'HIGH' || p === 'URGENT' || p === 'CRITICAL' ? '#ef4444' : p === 'LOW' ? '#6b7280' : '#374151';
+                      return <td key={c.field} style={{ color: pc, fontWeight: (p === 'HIGH' || p === 'URGENT') ? 600 : 400 }}>{cellValue(row, c.field)}</td>;
+                    }
+                    return <td key={c.field} className={c.numeric ? 'num' : ''}>{cellValue(row, c.field)}</td>;
+                  })}
                   <td style={{ whiteSpace: 'nowrap' }}>
                     <button className="ibtn" title="View" onClick={() => openForm(String(row.id), true)}><span className="material-symbols-rounded">visibility</span></button>
                     <button className="ibtn" title="Edit" onClick={() => openForm(String(row.id), false)}><span className="material-symbols-rounded">edit</span></button>
                     <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(row)}><span className="material-symbols-rounded">delete</span></button>
                   </td>
                 </tr>
-              )) : <tr><td colSpan={config.columns.length + 1}><div className="empty"><span className="material-symbols-rounded">description</span> No work orders found.</div></td></tr>}
+                );
+              }) : <tr><td colSpan={config.columns.length + 1}><div className="empty"><span className="material-symbols-rounded">description</span> No work orders found.</div></td></tr>}
             </tbody>
           </table>
         </div>
         <div className="pager">
-          <span>Showing {rows.length === 0 ? 0 : page * PAGE_SIZE + 1}\u2013{Math.min((page + 1) * PAGE_SIZE, totalElements)} of {formatNumber(totalElements)}</span>
+          <span>Showing {filteredRows.length === 0 ? 0 : page * PAGE_SIZE + 1}\u2013{Math.min((page + 1) * PAGE_SIZE, totalElements)} of {formatNumber(totalElements)}</span>
           <div className="pgs">
             <button disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>\u2039</button>
             {Array.from({ length: totalPages }, (_, i) => i).map((i) => <button key={i} className={i === page ? 'on' : ''} onClick={() => setPage(i)}>{i + 1}</button>)}
@@ -235,14 +340,14 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
         </div>
       </div>
     );
-  }, [listQuery.data, listQuery.isPending, listQuery.isError, searchInput, status, page, totalElements, totalPages, rows]);
+  }, [listQuery.data, listQuery.isPending, listQuery.isError, searchInput, status, priority, page, totalElements, totalPages, filteredRows]);
 
   if (mode === 'list') {
     return (
       <>
         <div className="pg-head"><h1>Work Orders</h1><p>Production work orders with operation and material tracking</p></div>
         {listBody}
-        <ConfirmActionModal open={Boolean(deleteTarget)} title={`Delete ${String(deleteTarget?.docNo ?? '')}`} body="Permanently delete this work order?" okLabel="Delete" danger busy={deleteMutation.isPending} onClose={() => setDeleteTarget(null)} onConfirm={async () => { if (!deleteTarget) return; try { await deleteMutation.mutateAsync(String(deleteTarget.id)); toast(`Deleted.`); setDeleteTarget(null); } catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); } }} />
+        <ConfirmActionModal open={Boolean(deleteTarget)} title={`Delete ${String(deleteTarget?.woNumber ?? deleteTarget?.docNo ?? '')}`} body="Permanently delete this work order?" okLabel="Delete" danger busy={deleteMutation.isPending} onClose={() => setDeleteTarget(null)} onConfirm={async () => { if (!deleteTarget) return; try { await deleteMutation.mutateAsync(String(deleteTarget.id)); toast(`Deleted.`); setDeleteTarget(null); } catch (e) { toast(getApiErrorMessage(e, 'Delete failed.'), 'error'); } }} />
       </>
     );
   }
@@ -250,7 +355,7 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
   if (documentId && documentQuery.isPending) return <div className="panel"><div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading Work Order...</div></div>;
   if (documentId && documentQuery.isError) return <div className="panel"><div className="empty"><span className="material-symbols-rounded">error</span>{getApiErrorMessage(documentQuery.error, 'Load failed.')}</div></div>;
 
-  const docNo = documentId ? String(doc?.docNo ?? '') : String(nextNumberQuery.data?.nextNumber ?? '\u2014');
+  const docNo = documentId ? String(doc?.woNumber ?? doc?.docNo ?? '') : String(nextNumberQuery.data?.nextNumber ?? '\u2014');
 
   return (
     <>
@@ -262,14 +367,21 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
           <div className="panel-h"><h2><span className="material-symbols-rounded">description</span> Header</h2>
             {documentId && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button type="button" className="btn btn-sm" title="Audit History" onClick={() => setAuditOpen(true)}>
+                <button type="button" className="btn btn-sm" title="Status History" onClick={fetchStatusHistory}>
+                  <span className="material-symbols-rounded">timeline</span> History
+                </button>
+                <button type="button" className="btn btn-sm" title="Audit Trail" onClick={() => setAuditOpen(true)}>
                   <span className="material-symbols-rounded">history</span> Audit
                 </button>
-                <StatusBadge status={genericStatus} />
+                <span style={{ display: 'inline-block', padding: '4px 12px', borderRadius: '4px', fontSize: '13px', fontWeight: 600, color: '#fff', background: STATUS_COLORS[genericStatus] ?? '#6b7280' }}>{genericStatus.replace('_', ' ')}</span>
               </div>
             )}
           </div>
           <div className="fgrid">
+            <label className="fld">
+              <span>WO No</span>
+              <input className="in" value={docNo} readOnly tabIndex={-1} style={{ fontWeight: 600, background: '#f9fafb' }} />
+            </label>
             {config.fields.map((field) => {
               const isBomOrRoute = field.key === 'bomId' || field.key === 'routeId';
               const pickerOptions = field.key === 'bomId'
@@ -278,9 +390,9 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
                   ? routeList.map((r) => `${r.id}`)
                   : (field.options ?? []);
               const pickerLabels = field.key === 'bomId'
-                ? bomList.map((b) => `${b.bomNumber} — ${b.itemCode}`)
+                ? bomList.map((b) => `${b.bomNumber} \u2014 ${b.itemCode}`)
                 : field.key === 'routeId'
-                  ? routeList.map((r) => `${r.routeNumber} — ${r.itemCode}`)
+                  ? routeList.map((r) => `${r.routeNumber} \u2014 ${r.itemCode}`)
                   : pickerOptions;
               return (
                 <label key={field.key} className={`fld ${field.span2 ? 'span2' : ''}`}>
@@ -343,13 +455,14 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
           <div className="actbar">
             <span className="lft"><span className="material-symbols-rounded">lock</span>{documentId ? 'Audited document' : 'New document'}</span>
             <button type="button" className="btn" onClick={backToList} disabled={isBusy}><span className="material-symbols-rounded">arrow_back</span> Back</button>
+            {documentId && <button type="button" className="btn" onClick={handlePrint} disabled={isBusy}><span className="material-symbols-rounded">print</span> Print</button>}
             {!documentId && <button type="button" className="btn btn-p" onClick={handleCreate} disabled={isBusy}><span className="material-symbols-rounded">save</span> Create Draft</button>}
             {documentId && editable && (
               <>
                 <button type="button" className="btn" onClick={handleSave} disabled={isBusy}><span className="material-symbols-rounded">save</span> Save</button>
-                {genericStatus !== 'DRAFT' && <button type="button" className="btn" onClick={() => runAction('reopen')} disabled={isBusy}><span className="material-symbols-rounded">restart_alt</span> Reopen</button>}
               </>
             )}
+            {/* FRS §6.4: Status-based action buttons */}
             {documentId && !isViewOnly && genericStatus === 'DRAFT' && can('planning', 'Edit') && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'submit', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">send</span> Submit</button>}
             {documentId && !isViewOnly && genericStatus === 'SUBMITTED' && (
               <>
@@ -358,15 +471,75 @@ export default function WorkOrderScreen({ initialDocId, viewOnly = false }: { in
               </>
             )}
             {documentId && !isViewOnly && genericStatus === 'APPROVED' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'release', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">rocket_launch</span> Release</button>}
-            {documentId && !isViewOnly && genericStatus === 'RELEASED' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'start', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">play_arrow</span> Start</button>}
-            {documentId && !isViewOnly && genericStatus === 'IN_PROCESS' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'complete', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">check_circle</span> Complete</button>}
+            {documentId && !isViewOnly && genericStatus === 'RELEASED' && (
+              <>
+                <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'start', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">play_arrow</span> Start</button>
+                <button type="button" className="btn" onClick={() => setActionModal({ action: 'hold', danger: true, title: 'Hold' })} disabled={isBusy}><span className="material-symbols-rounded">pause</span> Hold</button>
+              </>
+            )}
+            {documentId && !isViewOnly && genericStatus === 'IN_PROCESS' && (
+              <>
+                <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'complete', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">check_circle</span> Complete</button>
+                <button type="button" className="btn" onClick={() => setActionModal({ action: 'hold', danger: true, title: 'Hold' })} disabled={isBusy}><span className="material-symbols-rounded">pause</span> Hold</button>
+              </>
+            )}
+            {documentId && !isViewOnly && genericStatus === 'ON_HOLD' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'start', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">play_arrow</span> Resume</button>}
             {documentId && !isViewOnly && genericStatus === 'COMPLETED' && <button type="button" className="btn btn-p" onClick={() => setActionModal({ action: 'close', danger: false })} disabled={isBusy}><span className="material-symbols-rounded">lock</span> Close</button>}
             {documentId && !isViewOnly && ['DRAFT', 'SUBMITTED', 'APPROVED'].includes(genericStatus) && can('planning', 'Cancel') && <button type="button" className="btn btn-d" onClick={() => setActionModal({ action: 'cancel', danger: true })} disabled={isBusy}><span className="material-symbols-rounded">block</span> Cancel</button>}
           </div>
         </div>
       </form>
-      <ConfirmActionModal open={Boolean(actionModal)} title={`${actionModal?.action ?? ''} ${docNo}`} body={actionModal?.action === 'approve' ? 'Approve this work order?' : actionModal?.action === 'release' ? 'Release this work order for production?' : actionModal?.action === 'start' ? 'Start production on this work order?' : actionModal?.action === 'complete' ? 'Mark this work order as completed?' : actionModal?.action === 'close' ? 'Close this work order? This cannot be undone.' : actionModal?.action === 'reject' ? 'Reason for rejection:' : actionModal?.action === 'cancel' ? 'Cancel this work order?' : 'Submit for review?'} okLabel={actionModal ? actionModal.action.charAt(0).toUpperCase() + actionModal.action.slice(1) : 'Confirm'} danger={actionModal?.danger} busy={actionMutation.isPending} onClose={() => setActionModal(null)} onConfirm={(note: string) => actionModal && runAction(actionModal.action, note)} />
+      <ConfirmActionModal
+        open={Boolean(actionModal)}
+        title={`${actionModal?.title ?? actionModal?.action ?? ''} ${docNo}`}
+        body={
+          actionModal?.action === 'approve' ? 'Approve this work order?' :
+          actionModal?.action === 'release' ? 'Release this work order for production?' :
+          actionModal?.action === 'start' && genericStatus === 'ON_HOLD' ? 'Resume this work order from hold?' :
+          actionModal?.action === 'start' ? 'Start production on this work order?' :
+          actionModal?.action === 'complete' ? 'Mark this work order as completed?' :
+          actionModal?.action === 'close' ? 'Close this work order? This cannot be undone.' :
+          actionModal?.action === 'hold' ? 'Reason for hold (required):' :
+          actionModal?.action === 'reject' ? 'Reason for rejection:' :
+          actionModal?.action === 'cancel' ? 'Cancel this work order?' :
+          'Submit for review?'
+        }
+        okLabel={actionModal ? (actionModal.title ?? actionModal.action).charAt(0).toUpperCase() + (actionModal.title ?? actionModal.action).slice(1) : 'Confirm'}
+        danger={actionModal?.danger}
+        busy={actionMutation.isPending}
+        onClose={() => setActionModal(null)}
+        onConfirm={(note: string) => actionModal && runAction(actionModal.action, note)}
+      />
       <AuditHistoryDrawer open={auditOpen} entityType={auditEntityTypeFor(config.docType)} entityId={documentId ?? undefined} onClose={() => setAuditOpen(false)} />
+
+      {/* Status History Drawer */}
+      {statusHistoryOpen && (
+        <div style={{ position: 'fixed', top: 0, right: 0, width: '420px', height: '100vh', background: '#fff', boxShadow: '-4px 0 20px rgba(0,0,0,0.15)', zIndex: 1000, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #e5e7eb', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Status History</h3>
+            <button className="ibtn" onClick={() => setStatusHistoryOpen(false)}><span className="material-symbols-rounded">close</span></button>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', padding: '12px 20px' }}>
+            {statusHistory.length === 0 ? (
+              <div className="empty"><span className="material-symbols-rounded">history</span> No status changes recorded.</div>
+            ) : (
+              <div style={{ position: 'relative', paddingLeft: '24px' }}>
+                <div style={{ position: 'absolute', left: '8px', top: 0, bottom: 0, width: '2px', background: '#e5e7eb' }} />
+                {statusHistory.map((h, idx) => (
+                  <div key={idx} style={{ position: 'relative', marginBottom: '16px', padding: '10px 14px', background: '#f9fafb', borderRadius: '6px', border: '1px solid #e5e7eb' }}>
+                    <div style={{ position: 'absolute', left: '-20px', top: '14px', width: '12px', height: '12px', borderRadius: '50%', background: STATUS_COLORS[String(h.toStatus ?? '')] ?? '#6b7280', border: '2px solid #fff' }} />
+                    <div style={{ fontSize: '12px', fontWeight: 600, color: '#374151' }}>
+                      {String(h.fromStatus ?? '').replace('_', ' ')} <span style={{ color: '#9ca3af' }}>\u2192</span> <span style={{ color: STATUS_COLORS[String(h.toStatus ?? '')] ?? '#374151' }}>{String(h.toStatus ?? '').replace('_', ' ')}</span>
+                    </div>
+                    {h.reason && <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>{String(h.reason)}</div>}
+                    <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>{String(h.createdBy ?? '')} \u2022 {String(h.createdAt ?? '').replace('T', ' ').slice(0, 19)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }

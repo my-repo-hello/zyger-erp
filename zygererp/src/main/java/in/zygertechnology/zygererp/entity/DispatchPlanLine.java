@@ -23,6 +23,10 @@ public class DispatchPlanLine {
 
     @Column(name = "so_line_id")
     Long soLineId;
+    @Column(name = "so_id")
+    Long soId;
+    @Column(name = "wo_id")
+    Long woId;
 
     @Column(name = "wo_number", length = 60)
     String woNumber;

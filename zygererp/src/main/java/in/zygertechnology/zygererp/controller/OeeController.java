@@ -60,7 +60,19 @@ public class OeeController {
 
         if (planned.compareTo(BigDecimal.ZERO) > 0 && run.compareTo(BigDecimal.ZERO) > 0) {
             oee.setAvailability(run.divide(planned, 4, RoundingMode.HALF_UP));
-            oee.setPerformance(run.divide(planned, 4, RoundingMode.HALF_UP)); // simplified
+
+            // Performance = (idealCycleTime × totalQty) / runTime
+            // idealCycleTime is in seconds, runTime is in minutes
+            BigDecimal idealCycle = oee.getIdealCycleTimeSec() != null ? oee.getIdealCycleTimeSec() : BigDecimal.ZERO;
+            if (idealCycle.compareTo(BigDecimal.ZERO) > 0 && total.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal idealRunMin = idealCycle.multiply(total).divide(BigDecimal.valueOf(60), 4, RoundingMode.HALF_UP);
+                BigDecimal perf = idealRunMin.divide(run, 4, RoundingMode.HALF_UP);
+                if (perf.compareTo(BigDecimal.ONE) > 0) perf = BigDecimal.ONE;
+                oee.setPerformance(perf);
+            } else {
+                oee.setPerformance(run.divide(planned, 4, RoundingMode.HALF_UP));
+            }
+
             if (total.compareTo(BigDecimal.ZERO) > 0) {
                 oee.setQualityRate(good.divide(total, 4, RoundingMode.HALF_UP));
             }

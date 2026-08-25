@@ -25,7 +25,7 @@ export default function InspectionPlanPage() {
 
   function updateChar(i: number, field: keyof Char, value: string | boolean) {
     const c = [...chars];
-    (c[i] as Record<string, unknown>)[field] = value;
+    (c[i] as unknown as Record<string, unknown>)[field] = value;
     setChars(c);
   }
 

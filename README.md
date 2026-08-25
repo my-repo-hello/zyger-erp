@@ -67,13 +67,39 @@ The React Vite frontend will start on **`http://localhost:5173`**.
 
 ### Option 2: Running with Docker Compose
 
-To build and launch both backend and database services together in containers:
+To build and launch services with Docker Compose:
 
 ```bash
 docker compose up --build
 ```
 
 ---
+
+### Option 3: Running with Docker Swarm (Stack Mode - Port 9091)
+
+To host the full stack on Docker Swarm with the frontend always running on port **9091**:
+
+```bash
+./deploy.sh
+```
+
+Or manually:
+
+```bash
+# 1. Initialize Docker Swarm (if not already active)
+docker swarm init
+
+# 2. Build Docker images
+docker build -f Dockerfile.backend -t zyger-erp/backend:latest -t zyger-erp/backend:v6 .
+docker build -f Dockerfile.frontend -t zyger-erp/frontend:latest -t zyger-erp/frontend:v6 .
+
+# 3. Deploy stack to Docker Swarm
+docker stack deploy -c stack.yml zygererp
+```
+
+**Access URLs:**
+- **Frontend**: [http://localhost:9091](http://localhost:9091)
+- **Backend**: [http://localhost:9090](http://localhost:9090)
 
 ## 🛠️ Verification & Build Commands
 

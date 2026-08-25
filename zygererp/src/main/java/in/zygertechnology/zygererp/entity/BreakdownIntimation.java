@@ -5,11 +5,13 @@ import lombok.*;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "breakdown_intimation")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class BreakdownIntimation {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -3,11 +3,13 @@ package in.zygertechnology.zygererp.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "engineering_change")
 @Getter
 @Setter
+@EntityListeners(AuditEntityListener.class)
 public class EngineeringChange {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -84,6 +86,25 @@ public class EngineeringChange {
 
     @Column(name = "drawing_rev_to", length = 30)
     String drawingRevTo;
+
+    @Column(name = "impact_analysis_json", columnDefinition = "TEXT")
+    String impactAnalysisJson;
+    @Column(name = "approved_by_chain", columnDefinition = "TEXT")
+    String approvedByChain;
+    @Column(name = "implementation_plan", columnDefinition = "TEXT")
+    String implementationPlan;
+    @Column(name = "cut_in_wo_no", length = 60)
+    String cutInWoNo;
+    @Column(name = "old_stock_disposition", length = 30)
+    String oldStockDisposition;
+    @Column(name = "cost_impact_estimate", precision = 18, scale = 4)
+    java.math.BigDecimal costImpactEstimate;
+    @Column(name = "verified_by", length = 100)
+    String verifiedBy;
+    @Column(name = "verified_date")
+    Instant verifiedDate;
+    @Column(name = "closed_date")
+    Instant closedDate;
 
     @Column(name = "requested_by", length = 100)
     String requestedBy;

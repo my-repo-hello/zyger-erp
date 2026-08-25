@@ -52,9 +52,9 @@ public class RbacAspect {
                 .anyMatch(code -> {
                     String[] parts = code.split(":");
                     if (parts.length != 3) return false;
-                    boolean moduleMatch = "*".equals(parts[0]) || parts[0].equalsIgnoreCase(module);
-                    boolean screenMatch = "*".equals(parts[1]) || parts[1].equalsIgnoreCase(screen);
-                    boolean actionMatch = "*".equals(parts[2]) || parts[2].equalsIgnoreCase(action);
+                    boolean moduleMatch = "*".equals(module) || "*".equals(parts[0]) || parts[0].equalsIgnoreCase(module);
+                    boolean screenMatch = "*".equals(screen) || "*".equals(parts[1]) || parts[1].equalsIgnoreCase(screen);
+                    boolean actionMatch = "*".equals(action) || "*".equals(parts[2]) || parts[2].equalsIgnoreCase(action);
                     return moduleMatch && screenMatch && actionMatch;
                 });
 

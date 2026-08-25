@@ -108,23 +108,6 @@ export default function BarcodeScanner({
     setCameraActive(false);
   }, [stream]);
 
-  // Attempt to read QR/barcode from video frame (camera mode)
-  const captureFrame = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return;
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0);
-
-    // For production, integrate a JS barcode library (zxing-js, jsQR)
-    // For now, use a simple heuristic: if there's a focused input, let the
-    // camera serve as a visual confirmation while hardware scanner does the work
-  }, []);
-
   return (
     <div className={className} style={style}>
       {label && (

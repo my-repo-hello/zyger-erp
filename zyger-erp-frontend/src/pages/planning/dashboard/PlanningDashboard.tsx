@@ -87,7 +87,7 @@ export default function PlanningDashboard() {
                     { name: 'In Process', value: data.inProcess, fill: '#2563eb' },
                     { name: 'Completed', value: data.completed, fill: '#059669' },
                     { name: 'Closed', value: data.closed, fill: '#6b7280' },
-                  ].filter((d) => d.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                  ].filter((d) => d.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
                     {[
                       { fill: '#f59e0b' }, { fill: '#16a34a' }, { fill: '#2563eb' },
                       { fill: '#059669' }, { fill: '#6b7280' },

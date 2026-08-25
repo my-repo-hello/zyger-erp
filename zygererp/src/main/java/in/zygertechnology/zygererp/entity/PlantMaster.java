@@ -3,10 +3,12 @@ package in.zygertechnology.zygererp.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "plant_master")
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class PlantMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;

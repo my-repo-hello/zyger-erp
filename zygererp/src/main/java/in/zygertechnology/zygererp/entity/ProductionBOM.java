@@ -22,6 +22,19 @@ public class ProductionBOM extends BaseDoc implements DocEntity {
     @Column(name = "release_date") LocalDate releaseDate;
     @Column(name = "obsolete_date") LocalDate obsoleteDate;
     @Column(name = "parent_bom_id") Long parentBomId;
+    /** FRS §4.4: FG, SEMI_FG */
+    @Column(name = "item_type", length = 30) String itemType;
+    /** FRS §4.4: FK to SalesOrder for SO-specific BOM */
+    @Column(name = "sales_order_id") Long salesOrderId;
+    /** FRS §4.4: total weight roll-up */
+    @Column(precision = 14, scale = 4) BigDecimal weight;
+    /** FRS §4.4: revision chain linkage */
+    @Column(name = "previous_revision_id") Long previousRevisionId;
+    /** FRS §5.2: Primary or Alternate */
+    @Column(name = "bom_type", length = 30) String bomType;
+    @Column(name = "is_active") Boolean isActive;
+    /** FRS §3.2: rolled-up total material cost from components */
+    @Column(name = "total_material_cost", precision = 18, scale = 4) BigDecimal totalMaterialCost;
 
     @OneToMany(mappedBy = "doc", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     List<ProductionBOMLine> lines = new ArrayList<>();

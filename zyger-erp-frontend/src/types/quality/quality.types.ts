@@ -157,6 +157,8 @@ export interface InspectionDto {
   referenceId?: number;
   referenceNumber?: string;
   referenceType?: string;
+  _allowedTransitions?: string[];
+  _isTerminal?: boolean;
 }
 
 export interface InspectionListRowDto {

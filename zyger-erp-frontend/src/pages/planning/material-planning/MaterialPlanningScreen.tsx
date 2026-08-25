@@ -150,6 +150,18 @@ export default function MaterialPlanningScreen() {
             <input className="in" value={String(form.plannedBy ?? '')} onChange={(e) => set('plannedBy', e.target.value)} />
           </label>
           <label className="fld">
+            <span>Horizon Start</span>
+            <input className="in" type="date" value={String(form.planningHorizonStart ?? '')} onChange={(e) => set('planningHorizonStart', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Horizon End</span>
+            <input className="in" type="date" value={String(form.planningHorizonEnd ?? '')} onChange={(e) => set('planningHorizonEnd', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Triggered By</span>
+            <input className="in" value={String(form.triggeredBy ?? '')} onChange={(e) => set('triggeredBy', e.target.value)} />
+          </label>
+          <label className="fld">
             <span>Status</span>
             <select className="in" value={String(form.status ?? 'DRAFT')} onChange={(e) => set('status', e.target.value)}>
               <option value="DRAFT">Draft</option>
@@ -172,7 +184,10 @@ export default function MaterialPlanningScreen() {
 
       <div className="panel">
         <div className="toolbar">
-          <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="searchwrap">
+            <span className="material-symbols-rounded">search</span>
+            <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
           <span className="count">{total} plans</span>
         </div>
         <div className="twrap">

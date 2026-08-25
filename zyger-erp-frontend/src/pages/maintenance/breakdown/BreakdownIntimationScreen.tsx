@@ -3,6 +3,7 @@ import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
+import QRScanInput from '../../../components/common/QRScanInput';
 import StatusBadge from '../../../components/common/StatusBadge';
 
 interface Breakdown {
@@ -102,6 +103,7 @@ export default function BreakdownIntimationScreen() {
       {tab === 'form' && (
         <div className="panel">
           <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Breakdown</h2></div>
+          <QRScanInput label="Scan Machine QR" placeholder="Scan or type machine code…" onScan={(code) => set('machineCode', code)} />
           <div className="fgrid">
             <label className="fld"><span>Breakdown Date</span><input className="in" type="date" value={String(form.breakdownDate ?? '').slice(0, 10)} onChange={(e) => set('breakdownDate', e.target.value)} /></label>
             <label className="fld"><span>Breakdown Time</span><input className="in" type="time" value={String(form.breakdownTime ?? '').slice(0, 5)} onChange={(e) => set('breakdownTime', e.target.value)} /></label>

@@ -19,6 +19,12 @@ public class RouteSheet extends BaseDoc implements DocEntity {
     @Column(name = "base_quantity") BigDecimal baseQuantity;
     @Column(name = "base_uom", length = 20) String baseUom;
     @Column(name = "approved_by", length = 60) String approvedBy;
+    /** FRS §3.3: AUTO-FILL sum of detail setup times */
+    @Column(name = "total_setup_time", precision = 14, scale = 2) BigDecimal totalSetupTime;
+    /** FRS §3.3: AUTO-FILL sum of detail cycle times */
+    @Column(name = "total_cycle_time", precision = 14, scale = 2) BigDecimal totalCycleTime;
+    /** FRS §3.3: AUTO-FILL sum of detail run times */
+    @Column(name = "total_run_time", precision = 14, scale = 2) BigDecimal totalRunTime;
 
     @OneToMany(mappedBy = "doc", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     List<RouteOperation> operations = new ArrayList<>();

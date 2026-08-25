@@ -3,8 +3,10 @@ package in.zygertechnology.zygererp.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 
-@Entity @Table(name = "route_operation") @Getter @Setter
+@Entity @Table(name = "route_operation") @Getter @Setter @NoArgsConstructor @AllArgsConstructor @Builder
 public class RouteOperation implements LineEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
     @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "doc_id")
@@ -16,6 +18,15 @@ public class RouteOperation implements LineEntity {
     @Column(name = "operation_description", length = 200) String operationDescription;
     @Column(name = "work_center_code", length = 60) String workCenterCode;
     @Column(name = "machine_code", length = 60) String machineCode;
+    /** FRS §4.7: FK to ProcessMaster */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "process_id") ProcessMaster process;
+    /** FRS §4.7: FK to ResourceMaster */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "resource_id") ResourceMaster resource;
+    @Column(name = "resource_name", length = 200) String resourceName;
+    @Column(name = "resource_type", length = 30) String resourceType;
+    @Column(name = "process_type", length = 30) String processType;
     @Column(name = "setup_time") BigDecimal setupTime;
     @Column(name = "cycle_time") BigDecimal cycleTime;
     @Column(name = "run_basis", length = 30) String runBasis;
@@ -33,7 +44,17 @@ public class RouteOperation implements LineEntity {
     @Column(name = "skill_required", length = 100) String skillRequired;
     @Column(name = "nc_program_reference", length = 100) String ncProgramReference;
     @Column(name = "standard_cost_rate") BigDecimal standardCostRate;
+    /** FRS §3.3: MACHINING/INSPECTION/ASSEMBLY/PACKING/SUBCONTRACT */
+    @Column(name = "operation_type", length = 30) String operationType;
+    @Column(name = "teardown_time", precision = 14, scale = 2) BigDecimal teardownTime;
+    @Column(name = "subcontract_vendor_id") Long subcontractVendorId;
+    @Column(name = "skill_grade_required", length = 100) String skillGradeRequired;
+    @Column(name = "manpower_count") Integer manpowerCount;
     @Column(length = 300) String remarks;
+
+    @OneToMany(mappedBy = "routeOperation", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @Builder.Default
+    List<RouteOperationTool> tools = new ArrayList<>();
 
     @Override public String getItemCode() { return operationCode; }
     @Override public String getLocation() { return workCenterCode; }

@@ -49,6 +49,9 @@ public class ProductionController {
     private final MachineMasterRepository machines;
     private final PrintService printer;
     @Lazy private final StockService stockService;
+    private final jakarta.persistence.EntityManager em;
+    private final in.zygertechnology.zygererp.service.WorkflowStateMachine stateMachine;
+    private final in.zygertechnology.zygererp.service.ProductionRollupService rollupService;
 
     private static String principalName(Principal p) { return p != null ? p.getName() : "system"; }
 
@@ -237,6 +240,36 @@ public class ProductionController {
                 jc.setHoldReason(note);
                 break;
             }
+            case "quality-hold": {
+                jc.setStatus("QUALITY_HOLD");
+                jc.setHoldReason(note);
+                break;
+            }
+            case "production-hold": {
+                jc.setStatus("PRODUCTION_HOLD");
+                jc.setHoldReason(note);
+                break;
+            }
+            case "release-hold": {
+                if (!"QUALITY_HOLD".equals(jc.getStatus()) && !"PRODUCTION_HOLD".equals(jc.getStatus())) {
+                    errors.add("Job Card must be on QUALITY_HOLD or PRODUCTION_HOLD to release hold");
+                    result.put("success", false);
+                    result.put("errors", errors);
+                    return result;
+                }
+                jc.setStatus("RELEASED");
+                break;
+            }
+            case "reopen": {
+                if (!"COMPLETED".equals(jc.getStatus())) {
+                    errors.add("Only COMPLETED job cards can be reopened");
+                    result.put("success", false);
+                    result.put("errors", errors);
+                    return result;
+                }
+                jc.setStatus("RELEASED");
+                break;
+            }
             case "resume": {
                 jc.setStatus("IN_PROGRESS");
                 break;
@@ -310,6 +343,28 @@ public class ProductionController {
                         jc.getJobCardNumber(), "job-card-complete", "FG_RECEIPT",
                         jc.getPartCode(), "STORE", null, null,
                         totalGood, LocalDate.now(), principalName(p), "FREE");
+                }
+
+                // FRS §8: Auto-create IPQC inspection on production completion
+                if (totalGood.compareTo(BigDecimal.ZERO) > 0 && jc.getPartCode() != null) {
+                    try {
+                        QualityInspection qi = new QualityInspection();
+                        qi.setDocNo(numbers.next("QUALITY_INSPECTION", "QC"));
+                        qi.setInspectionType(QualityInspectionType.IPQC);
+                        qi.setSourceType("PRODUCTION");
+                        qi.setSourceNumber(jc.getJobCardNumber());
+                        qi.setDocDate(LocalDate.now());
+                        qi.setInspectionDate(LocalDate.now());
+                        qi.setItemCode(jc.getPartCode());
+                        qi.setReceivedQuantity(totalGood);
+                        qi.setInspectionQuantity(totalGood);
+                        qi.setInspectionStatus("DRAFT");
+                        qi.setDecisionStatus("PENDING");
+                        qi.setCreatedBy(principalName(p));
+                        qi.setCreatedAt(Instant.now());
+                        qi.setUpdatedAt(Instant.now());
+                        em.persist(qi);
+                    } catch (Exception ignored) {}
                 }
                 break;
             }
@@ -472,8 +527,23 @@ public class ProductionController {
             case "start": sj.setStatus("IN_PROGRESS"); sj.setStartTime(Instant.now()); break;
             case "hold": sj.setStatus("ON_HOLD"); break;
             case "quality-hold": sj.setStatus("QUALITY_HOLD"); break;
+            case "production-hold": sj.setStatus("PRODUCTION_HOLD"); break;
+            case "release-hold": {
+                if (!"QUALITY_HOLD".equals(sj.getStatus()) && !"PRODUCTION_HOLD".equals(sj.getStatus())) {
+                    throw new RuntimeException("Subjob must be on QUALITY_HOLD or PRODUCTION_HOLD to release hold");
+                }
+                sj.setStatus("RELEASED");
+                break;
+            }
             case "resume": sj.setStatus("IN_PROGRESS"); break;
             case "complete": sj.setStatus("COMPLETED"); sj.setEndTime(Instant.now()); break;
+            case "cancel": {
+                if ("COMPLETED".equals(sj.getStatus()) || "CLOSED".equals(sj.getStatus())) {
+                    throw new RuntimeException("COMPLETED/CLOSED subjobs cannot be cancelled");
+                }
+                sj.setStatus("CANCELLED");
+                break;
+            }
             default: throw new RuntimeException("Unknown action: " + action);
         }
         sj.setUpdatedAt(Instant.now());
@@ -648,6 +718,28 @@ public class ProductionController {
     public ProductConversion conversionAction(@PathVariable Long id, @PathVariable String action, Principal p) {
         ProductConversion pc = productConversions.findById(id).orElseThrow(() -> new RuntimeException("Product Conversion not found"));
         switch (action.toLowerCase()) {
+            case "submit": pc.setStatus("SUBMITTED"); break;
+            case "reject": pc.setStatus("REJECTED"); break;
+            case "verify": pc.setStatus("VERIFIED"); break;
+            case "post": {
+                if (!"VERIFIED".equals(pc.getStatus())) {
+                    throw new RuntimeException("Only VERIFIED conversions can be posted");
+                }
+                if (pc.getInputQuantity() != null && pc.getInputQuantity().compareTo(BigDecimal.ZERO) > 0 && pc.getInputItemCode() != null) {
+                    stockService.recordStockOut(
+                        pc.getConversionNumber(), "product-conversion", "CONVERSION_OUT",
+                        pc.getInputItemCode(), pc.getSourceWarehouse(), pc.getInputBatchNumber(), null,
+                        pc.getInputQuantity(), LocalDate.now(), principalName(p));
+                }
+                if (pc.getOutputQuantity() != null && pc.getOutputQuantity().compareTo(BigDecimal.ZERO) > 0 && pc.getOutputItemCode() != null) {
+                    stockService.recordStockIn(
+                        pc.getConversionNumber(), "product-conversion", "CONVERSION_IN",
+                        pc.getOutputItemCode(), pc.getDestinationWarehouse(), pc.getOutputBatchNumber(), null,
+                        pc.getOutputQuantity(), LocalDate.now(), principalName(p), "FREE");
+                }
+                pc.setStatus("POSTED");
+                break;
+            }
             case "complete": {
                 if (pc.getInputQuantity() != null && pc.getInputQuantity().compareTo(BigDecimal.ZERO) > 0 && pc.getInputItemCode() != null) {
                     stockService.recordStockOut(
@@ -719,6 +811,7 @@ public class ProductionController {
     public ProductionReturn returnAction(@PathVariable Long id, @PathVariable String action, Principal p) {
         ProductionReturn pr = productionReturns.findById(id).orElseThrow(() -> new RuntimeException("Production Return not found"));
         switch (action.toLowerCase()) {
+            case "submit": pr.setStatus("SUBMITTED"); break;
             case "verify": pr.setStatus("VERIFIED"); break;
             case "receive": {
                 if (pr.getQuantity() != null && pr.getQuantity().compareTo(BigDecimal.ZERO) > 0 && pr.getItemCode() != null) {

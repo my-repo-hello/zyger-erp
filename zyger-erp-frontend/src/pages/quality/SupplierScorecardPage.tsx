@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axiosClient from '../../api/axiosClient';
 import { useToast } from '../../contexts/ToastContext';
-import { exportToCsv } from '../../utils/csvExport';
+import { exportSimpleCsv } from '../../utils/csvExport';
 
 interface ScorecardRow {
   supplierCode: string;
@@ -75,8 +75,8 @@ export default function SupplierScorecardPage() {
             <span className="material-symbols-rounded">refresh</span> Refresh
           </button>
           <button className="btn" onClick={() => {
-            if (tab === 'scorecard') exportToCsv('supplier-scorecard', scorecard as unknown as Record<string, unknown>[]);
-            else exportToCsv('supplier-ncr-details', ncrDetails as unknown as Record<string, unknown>[]);
+            if (tab === 'scorecard') exportSimpleCsv(scorecard as unknown as Record<string, unknown>[], 'supplier-scorecard');
+            else exportSimpleCsv(ncrDetails as unknown as Record<string, unknown>[], 'supplier-ncr-details');
           }}>
             <span className="material-symbols-rounded">download</span> Export CSV
           </button>

@@ -3,11 +3,13 @@ package in.zygertechnology.zygererp.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "gap_analysis_run")
 @Getter
 @Setter
+@EntityListeners(AuditEntityListener.class)
 public class GapAnalysisRun {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -4,11 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
 import java.time.LocalDate;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "tool_service_intimation")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class ToolServiceIntimation {
 
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)

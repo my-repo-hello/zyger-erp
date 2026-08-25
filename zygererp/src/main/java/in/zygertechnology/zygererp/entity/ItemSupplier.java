@@ -3,6 +3,7 @@ package in.zygertechnology.zygererp.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "item_supplier", indexes = {
@@ -14,6 +15,7 @@ import java.math.BigDecimal;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class ItemSupplier {
 
     @Id

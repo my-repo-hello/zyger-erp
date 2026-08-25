@@ -4,7 +4,7 @@ import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
 import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
-import { exportToCsv } from '../../../utils/exportCsv';
+import { exportSimpleCsv } from '../../../utils/csvExport';
 import type { Party } from './supplierTypes';
 import { tryParseJson } from './supplierTypes';
 
@@ -96,7 +96,7 @@ export default function SupplierList({ onAdd, onEdit }: Props) {
               style={{ width: '280px' }}
             />
             <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: 600 }}>{total || filteredRows.length} records</span>
-            <button className="btn btn-sm" onClick={() => exportToCsv(filteredRows as unknown as Record<string, unknown>[], 'suppliers')} title="Export CSV">
+            <button className="btn btn-sm" onClick={() => exportSimpleCsv(filteredRows as unknown as Record<string, unknown>[], 'suppliers')} title="Export CSV">
               <span className="material-symbols-rounded" style={{ fontSize: 16 }}>download</span> CSV
             </button>
             <button className="btn btn-sm" onClick={() => { setAuditEntityId(undefined); setAuditOpen(true); }} title="Audit History">

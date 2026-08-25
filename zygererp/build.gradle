@@ -28,6 +28,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.aspectj:aspectjweaver'
 	implementation 'org.springframework.boot:spring-boot-starter-cache'
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	implementation 'io.micrometer:micrometer-registry-prometheus'
 	implementation 'com.github.ben-manes.caffeine:caffeine'
 	implementation 'org.flywaydb:flyway-core'
 	runtimeOnly   'org.flywaydb:flyway-database-postgresql'

@@ -180,7 +180,10 @@ export default function MachineLoadScreen() {
 
       <div className="panel">
         <div className="toolbar">
-          <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="searchwrap">
+            <span className="material-symbols-rounded">search</span>
+            <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
           <span className="count">{total} plans</span>
         </div>
         <div className="twrap">

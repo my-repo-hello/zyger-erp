@@ -16,6 +16,8 @@ import org.springframework.stereotype.Service;
 
 import java.awt.Color;
 import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -25,11 +27,32 @@ public class PrintService {
 
     private static final Logger log = LoggerFactory.getLogger(PrintService.class);
 
+    private final in.zygertechnology.zygererp.repo.CompanyInfoRepository companyInfos;
+
+    public PrintService(in.zygertechnology.zygererp.repo.CompanyInfoRepository companyInfos) {
+        this.companyInfos = companyInfos;
+    }
 
     private static final Color DARK = new Color(27, 36, 51);
     private static final Color MUTED = new Color(110, 116, 126);
     private static final Color MUTED_ON_DARK = new Color(168, 176, 190);
     private static final Color LIGHT = new Color(244, 246, 248);
+
+    private com.lowagie.text.Image loadCompanyLogo() {
+        try {
+            var ci = companyInfos.findById(1L).orElse(null);
+            if (ci == null || ci.getCompanyLogoUrl() == null || ci.getCompanyLogoUrl().isBlank()) return null;
+            Path filePath = Path.of("." + ci.getCompanyLogoUrl());
+            if (!Files.exists(filePath)) return null;
+            byte[] bytes = Files.readAllBytes(filePath);
+            com.lowagie.text.Image img = com.lowagie.text.Image.getInstance(bytes);
+            img.scaleToFit(40, 40);
+            return img;
+        } catch (Exception e) {
+            log.warn("Could not load company logo for PDF: {}", e.getMessage());
+            return null;
+        }
+    }
 
     /** Builds a print-ready delivery challan PDF from a document row. */
     public byte[] deliveryChallan(Map<String, Object> doc, String type) {
@@ -94,6 +117,13 @@ public class PrintService {
         left.setBackgroundColor(DARK);
         left.setBorder(PdfPCell.NO_BORDER);
         left.setPadding(12);
+
+        com.lowagie.text.Image logo = loadCompanyLogo();
+        if (logo != null) {
+            left.addElement(logo);
+            left.addElement(spacer(4));
+        }
+
         left.addElement(new Paragraph("DELIVERY CHALLAN",
                 FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20, Color.WHITE)));
         left.addElement(new Paragraph(label(type),
@@ -245,6 +275,13 @@ public class PrintService {
         left.setBackgroundColor(DARK);
         left.setBorder(PdfPCell.NO_BORDER);
         left.setPadding(12);
+
+        com.lowagie.text.Image logo = loadCompanyLogo();
+        if (logo != null) {
+            left.addElement(logo);
+            left.addElement(spacer(4));
+        }
+
         left.addElement(new Paragraph("GRN / STORE RECEIPT",
                 FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20, Color.WHITE)));
 
@@ -406,6 +443,214 @@ public class PrintService {
         return v == null || String.valueOf(v).isEmpty();
     }
 
+    /** FRS §18: Work Order print packet — header, materials, processes, signatures. */
+    public byte[] workOrder(Map<String, Object> doc) {
+        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            Document pdf = new Document(PageSize.A4, 40, 40, 44, 44);
+            PdfWriter.getInstance(pdf, baos);
+            pdf.open();
+
+            pdf.add(woTitleBar(doc));
+            pdf.add(spacer(6));
+
+            pdf.add(woDetailsTable(doc));
+            pdf.add(spacer(8));
+
+            List<?> materialLines = safeList(doc.get("materialLines"));
+            if (!materialLines.isEmpty()) {
+                pdf.add(section("Material Lines", doc));
+                pdf.add(spacer(4));
+                pdf.add(woMaterialsTable(materialLines));
+                pdf.add(spacer(8));
+            }
+
+            List<?> processLines = safeList(doc.get("lines"));
+            if (!processLines.isEmpty()) {
+                pdf.add(section("Process Lines", doc));
+                pdf.add(spacer(4));
+                pdf.add(woProcessTable(processLines));
+                pdf.add(spacer(8));
+            }
+
+            pdf.add(woSignatures());
+            pdf.add(spacer(6));
+            pdf.add(woFooter(doc));
+            pdf.close();
+            return baos.toByteArray();
+        } catch (Exception e) {
+            log.error("WO PDF print failed for {}", doc.get("docNo"), e);
+            throw new IllegalStateException("PDF print failed", e);
+        }
+    }
+
+    private PdfPTable woTitleBar(Map<String, Object> doc) {
+        PdfPTable t = new PdfPTable(2);
+        t.setWidthPercentage(100);
+        t.setWidths(new float[]{72, 28});
+
+        PdfPCell left = new PdfPCell();
+        left.setBackgroundColor(DARK);
+        left.setBorder(PdfPCell.NO_BORDER);
+        left.setPadding(12);
+
+        com.lowagie.text.Image logo = loadCompanyLogo();
+        if (logo != null) {
+            left.addElement(logo);
+            left.addElement(spacer(4));
+        }
+
+        left.addElement(new Paragraph("WORK ORDER",
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20, Color.WHITE)));
+        left.addElement(new Paragraph("Shop Floor Production Packet",
+                FontFactory.getFont(FontFactory.HELVETICA, 9, MUTED_ON_DARK)));
+
+        PdfPCell right = new PdfPCell();
+        right.setBackgroundColor(DARK);
+        right.setBorder(PdfPCell.NO_BORDER);
+        right.setPadding(12);
+        right.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        right.addElement(new Paragraph("WO No: " + str(doc.get("woNumber")),
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12, Color.WHITE)));
+        right.addElement(new Paragraph("Status: " + str(doc.get("status")),
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE)));
+        right.addElement(new Paragraph("Date: " + str(doc.get("docDate")),
+                FontFactory.getFont(FontFactory.HELVETICA, 9, MUTED_ON_DARK)));
+
+        t.addCell(left);
+        t.addCell(right);
+        return t;
+    }
+
+    private PdfPTable woDetailsTable(Map<String, Object> doc) {
+        PdfPTable t = new PdfPTable(4);
+        t.setWidthPercentage(100);
+        t.setWidths(new float[]{18, 32, 18, 32});
+
+        field(t, "Sales Order No", str(doc.get("salesOrderNo")));
+        field(t, "SO Line No", str(doc.get("salesOrderLineNo")));
+        field(t, "Customer", str(doc.get("customerCode")));
+        field(t, "Item Code", str(doc.get("itemCode")));
+        field(t, "Item Description", str(doc.get("itemDescription")));
+        field(t, "Drawing No", str(doc.get("drawingNumber")));
+        field(t, "Drawing Rev", str(doc.get("drawingRev")));
+        field(t, "Production Qty", num(doc.get("productionQty")));
+        field(t, "Completed Qty", num(doc.get("completedQty")));
+        field(t, "Rejected Qty", num(doc.get("rejectedQty")));
+        field(t, "Scrap Qty", num(doc.get("scrapQty")));
+        field(t, "UOM", str(doc.get("uom")));
+        field(t, "Planned Start", str(doc.get("plannedStartDate")));
+        field(t, "Planned End", str(doc.get("plannedEndDate")));
+        field(t, "Due Date", str(doc.get("dueDate")));
+        field(t, "Promised Delivery", str(doc.get("promisedDeliveryDate")));
+        field(t, "BOM Reference", str(doc.get("bomId")));
+        field(t, "BOM Revision", str(doc.get("bomRevision")));
+        field(t, "Route Reference", str(doc.get("routeId")));
+        field(t, "Route Revision", str(doc.get("routeRevision")));
+        field(t, "Priority", str(doc.get("priority")));
+        field(t, "Batch/Lot No", str(doc.get("batchLotNo")));
+        field(t, "Released By", str(doc.get("releasedBy")));
+        field(t, "Released Qty", num(doc.get("releasedQty")));
+
+        if (!isEmpty(doc.get("remarks"))) {
+            PdfPCell cell = new PdfPCell(new Phrase("Remarks: " + str(doc.get("remarks")),
+                    FontFactory.getFont(FontFactory.HELVETICA, 9)));
+            cell.setColspan(4);
+            cell.setPadding(6);
+            cell.setBackgroundColor(LIGHT);
+            t.addCell(cell);
+        }
+        return t;
+    }
+
+    private PdfPTable woMaterialsTable(List<?> materials) {
+        PdfPTable t = new PdfPTable(6);
+        t.setWidthPercentage(100);
+        t.setWidths(new float[]{4, 15, 30, 10, 12, 12});
+        t.setSpacingBefore(0);
+
+        header(t, "#");
+        header(t, "Component Code");
+        header(t, "Description");
+        header(t, "UOM");
+        header(t, "Required Qty");
+        header(t, "Issued Qty");
+
+        int n = 0;
+        for (Object o : materials) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> line = (Map<String, Object>) o;
+            n++;
+            cell(t, String.valueOf(n), false);
+            cell(t, str(line.get("componentItemCode")), false);
+            cell(t, str(line.get("description")), false);
+            cell(t, str(line.get("uom")), false);
+            cell(t, num(line.get("requiredQuantity")), true);
+            cell(t, num(line.get("issuedQuantity")), true);
+        }
+        return t;
+    }
+
+    private PdfPTable woProcessTable(List<?> processes) {
+        PdfPTable t = new PdfPTable(7);
+        t.setWidthPercentage(100);
+        t.setWidths(new float[]{4, 8, 20, 16, 12, 12, 12});
+        t.setSpacingBefore(0);
+
+        header(t, "#");
+        header(t, "Seq");
+        header(t, "Operation");
+        header(t, "Work Centre");
+        header(t, "Setup Time");
+        header(t, "Cycle Time");
+        header(t, "Status");
+
+        int n = 0;
+        for (Object o : processes) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> line = (Map<String, Object>) o;
+            n++;
+            cell(t, String.valueOf(n), false);
+            cell(t, str(line.get("operationSequence")), false);
+            cell(t, str(line.get("operationCode")), false);
+            cell(t, str(line.get("workCenterCode")), false);
+            cell(t, num(line.get("setupTimePlanned")), true);
+            cell(t, num(line.get("cycleTimePlanned")), true);
+            cell(t, str(line.get("status")), false);
+        }
+        return t;
+    }
+
+    private PdfPTable woSignatures() {
+        PdfPTable t = new PdfPTable(3);
+        t.setWidthPercentage(100);
+        t.setWidths(new float[]{33, 34, 33});
+        t.setSpacingBefore(18);
+
+        t.addCell(signatureWrapper("Prepared By"));
+        t.addCell(signatureWrapper("Released By"));
+        t.addCell(signatureWrapper("Production Supervisor"));
+        return t;
+    }
+
+    private PdfPTable woFooter(Map<String, Object> doc) {
+        PdfPTable t = new PdfPTable(1);
+        t.setWidthPercentage(100);
+        PdfPCell c = new PdfPCell(new Phrase(
+                "Printed: " + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+                        + "  |  Version: " + str(doc.get("version")),
+                FontFactory.getFont(FontFactory.HELVETICA, 7, MUTED)));
+        c.setBorder(PdfPCell.NO_BORDER);
+        c.setPadding(4);
+        c.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        t.addCell(c);
+        return t;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<?> safeList(Object obj) {
+        return obj instanceof List ? (List<?>) obj : List.of();
+    }
+
     /** Builds a generic sales document PDF from a document row. */
     public byte[] salesDoc(Map<String, Object> doc, String type) {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
@@ -442,6 +687,13 @@ public class PrintService {
         left.setBackgroundColor(DARK);
         left.setBorder(PdfPCell.NO_BORDER);
         left.setPadding(12);
+
+        com.lowagie.text.Image logo = loadCompanyLogo();
+        if (logo != null) {
+            left.addElement(logo);
+            left.addElement(spacer(4));
+        }
+
         String title = type.replace('-', ' ').toUpperCase();
         left.addElement(new Paragraph(title,
                 FontFactory.getFont(FontFactory.HELVETICA_BOLD, 20, Color.WHITE)));

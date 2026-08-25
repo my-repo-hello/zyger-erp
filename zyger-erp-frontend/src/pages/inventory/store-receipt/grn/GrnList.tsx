@@ -238,9 +238,9 @@ export default function GrnList({ onAdd, onEdit, onView }: GrnListProps) {
                   COLUMNS.map((c) => ({
                     key: c.field,
                     label: c.label,
-                    render: (value: unknown, row: GrnListRowDto) =>
+                    render: (value: unknown, row: Record<string, unknown>) =>
                       c.field === 'date'
-                        ? formatDate(row.date)
+                        ? formatDate((row as unknown as GrnListRowDto).date)
                         : c.field === 'qty'
                           ? String(formatNumber(Number(value ?? 0)))
                           : String(value ?? ''),

@@ -5,10 +5,12 @@ import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "quality_characteristic_measurement")
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class QualityCharacteristicMeasurement {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;

@@ -157,7 +157,7 @@ export default function QualityDashboard() {
                 { name: 'Pass', value: data.pass, fill: '#16a34a' },
                 { name: 'Fail', value: data.fail, fill: '#dc2626' },
                 { name: 'Hold', value: data.hold, fill: '#f59e0b' },
-              ].filter((d) => d.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+              ].filter((d) => d.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}               label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
                 {[{ fill: '#16a34a' }, { fill: '#dc2626' }, { fill: '#f59e0b' }].map((entry, i) => <Cell key={i} fill={entry.fill} />)}
               </Pie>
               <Tooltip />

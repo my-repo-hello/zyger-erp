@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import axiosClient from '../../api/axiosClient';
 import { useToast } from '../../contexts/ToastContext';
-import { exportToCsv } from '../../utils/csvExport';
+import { exportSimpleCsv } from '../../utils/csvExport';
 
 interface CostRow {
   machineCode: string;
@@ -76,7 +76,7 @@ export default function CostRollupPage() {
           <button className="btn btn-p" onClick={load} disabled={loading}>
             <span className="material-symbols-rounded">refresh</span> Refresh
           </button>
-          <button className="btn" onClick={() => exportToCsv('machine-costs', costs as unknown as Record<string, unknown>[])}>
+          <button className="btn" onClick={() => exportSimpleCsv(costs as unknown as Record<string, unknown>[], 'machine-costs')}>
             <span className="material-symbols-rounded">download</span> Export CSV
           </button>
           <div style={{ flex: 1 }} />

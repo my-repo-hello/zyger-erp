@@ -20,6 +20,7 @@ public class AppUser {
     @Column(length = 20) String phone;
     @Column(length = 60) String department;
     @Column(length = 60) String designation;
+    @Column(name = "plant_id") @Builder.Default Long plantId = 1L;
     @Version Long version;
     String createdBy;
     Instant createdAt;

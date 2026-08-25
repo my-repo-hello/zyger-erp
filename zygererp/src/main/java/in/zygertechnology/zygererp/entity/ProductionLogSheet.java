@@ -5,11 +5,13 @@ import lombok.*;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "production_log_sheet")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class ProductionLogSheet {
 
     @Id
@@ -36,6 +38,13 @@ public class ProductionLogSheet {
 
     @Column(name = "shift_code", length = 60)
     private String shiftCode;
+
+    @Column(name = "subjob_number", length = 60) String subjobNumber;
+
+    @Column(name = "plant_id") Long plantId;
+
+    @Column(name = "supervisor_verified_by", length = 100) String supervisorVerifiedBy;
+    @Column(name = "supervisor_verified_at") Instant supervisorVerifiedAt;
 
     @Column(length = 30)
     private String status;

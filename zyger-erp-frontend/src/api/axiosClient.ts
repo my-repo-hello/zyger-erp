@@ -29,7 +29,10 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const config = error.config as RetryableConfig | undefined;
 
-    if (error.response?.status === 401 && config && !config.url?.includes('/auth/')) {
+    const isAuthRequest = config?.url?.includes('/auth/');
+    const status = error.response?.status;
+
+    if ((status === 401 || (status === 403 && !sessionStorage.getItem('zyger-access-token'))) && !isAuthRequest) {
       sessionStorage.removeItem('zyger-access-token');
       sessionStorage.removeItem('zyger-user');
       if (!window.location.pathname.startsWith('/login')) {
@@ -38,8 +41,10 @@ apiClient.interceptors.response.use(
       return Promise.reject(new Error('Session expired. Please sign in again.'));
     }
 
-    if (error.response?.status === 403) {
-      return Promise.reject(new Error("You don't have permission for this action."));
+    if (status === 403) {
+      const data = error.response?.data as Record<string, unknown> | undefined;
+      const message = (data?.detail as string) || "You don't have permission for this action.";
+      return Promise.reject(new Error(message));
     }
 
     if (config && !error.response?.status?.toString().startsWith('4')) {
@@ -53,7 +58,7 @@ apiClient.interceptors.response.use(
 
     if (error.response) {
       const data = error.response.data as Record<string, unknown> | undefined;
-      const message = (data?.message as string) || 'An unexpected error occurred.';
+      const message = (data?.detail as string) || (data?.message as string) || 'An unexpected error occurred.';
       return Promise.reject(new Error(message));
     }
     return Promise.reject(new Error('Network Error. Please check your connection.'));

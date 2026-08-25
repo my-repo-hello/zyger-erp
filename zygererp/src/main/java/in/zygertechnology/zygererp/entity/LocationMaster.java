@@ -3,8 +3,10 @@ package in.zygertechnology.zygererp.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity @Table(name="location_master") @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class LocationMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
     @Column(length = 60) String code;

@@ -10,7 +10,7 @@ const QUEUE_STORE = 'pending-sync';
 
 export interface OfflineEntry {
   id: string;
-  type: 'inspection-measurement' | 'breakdown-intimation';
+  type: 'inspection-measurement' | 'breakdown-intimation' | 'production-entry' | 'idle-time' | 'production-log';
   endpoint: string;
   method: 'POST' | 'PUT';
   body: Record<string, unknown>;

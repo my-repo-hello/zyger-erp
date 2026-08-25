@@ -16,6 +16,12 @@ public class ProcessMaster {
     @Column(length = 500) String description;
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "process_group_id") ProcessGroup processGroup;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "required_resource_id") ResourceMaster requiredResource;
+    @Column(name = "resource_name", length = 200) String resourceName;
+    @Column(name = "resource_type", length = 30) String resourceType;
+    /** FRS §4.2: Insource or Outsource */
+    @Column(name = "process_type", length = 30) String processType;
     @Column(name = "cycle_time", precision = 10, scale = 2) BigDecimal cycleTime;
     @Column(name = "setup_time", precision = 10, scale = 2) BigDecimal setupTime;
     @Column(name = "unit_rate", precision = 12, scale = 2) BigDecimal unitRate;

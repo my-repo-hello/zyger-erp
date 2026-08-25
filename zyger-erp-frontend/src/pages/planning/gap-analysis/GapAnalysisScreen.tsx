@@ -16,13 +16,22 @@ interface GapAnalysis {
 interface GapResult {
   id: number;
   severity: string;
+  gapType: string;
   description: string;
   componentCode?: string;
   componentDescription?: string;
   requiredQty?: number;
   availableQty?: number;
   gapQty?: number;
+  demandHours?: number;
+  supplyHours?: number;
+  gapHours?: number;
+  gapValue?: number;
   suggestedAction?: string;
+  actionStatus?: string;
+  gapOwner?: string;
+  responsibleDepartment?: string;
+  expectedResolutionDate?: string;
 }
 
 const PAGE_SIZE = 20;
@@ -182,7 +191,10 @@ export default function GapAnalysisScreen() {
 
       <div className="panel">
         <div className="toolbar">
-          <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="searchwrap">
+            <span className="material-symbols-rounded">search</span>
+            <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
           <span className="count">{total} analyses</span>
         </div>
         <div className="twrap">
@@ -245,11 +257,15 @@ export default function GapAnalysisScreen() {
                                 <thead>
                                   <tr>
                                     <th>Severity</th>
+                                    <th>Gap Type</th>
                                     <th>Component</th>
-                                    <th>Description</th>
                                     <th>Required</th>
                                     <th>Available</th>
-                                    <th>Gap</th>
+                                    <th>Gap Qty</th>
+                                    <th>Gap Hours</th>
+                                    <th>Gap Value</th>
+                                    <th>Owner</th>
+                                    <th>Action Status</th>
                                     <th>Suggested Action</th>
                                   </tr>
                                 </thead>
@@ -263,12 +279,16 @@ export default function GapAnalysisScreen() {
                                             {res.severity}
                                           </span>
                                         </td>
-                                        <td>{res.componentCode ?? '—'}</td>
-                                        <td>{res.description}</td>
+                                        <td>{res.gapType ?? '—'}</td>
+                                        <td>{res.componentCode ?? res.componentDescription ?? '—'}</td>
                                         <td>{res.requiredQty ?? '—'}</td>
                                         <td>{res.availableQty ?? '—'}</td>
                                         <td>{res.gapQty ?? '—'}</td>
-                                        <td>{res.suggestedAction ?? '—'}</td>
+                                        <td>{res.gapHours ?? '—'}</td>
+                                        <td>{res.gapValue != null ? `$${res.gapValue.toLocaleString()}` : '—'}</td>
+                                        <td>{res.gapOwner ?? '—'}</td>
+                                        <td>{res.actionStatus ?? '—'}</td>
+                                        <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{res.suggestedAction ?? '—'}</td>
                                       </tr>
                                     );
                                   })}

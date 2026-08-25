@@ -4,11 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "cost_estimation")
 @Getter
 @Setter
+@EntityListeners(AuditEntityListener.class)
 public class CostEstimation {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -28,6 +30,10 @@ public class CostEstimation {
 
     @Column(name = "so_number", length = 60)
     String soNumber;
+    @Column(name = "customer_id")
+    Long customerId;
+    @Column(name = "so_id")
+    Long soId;
 
     @Column(name = "batch_qty", precision = 38, scale = 2)
     BigDecimal batchQty;
@@ -86,14 +92,38 @@ public class CostEstimation {
     @Column(name = "estimated_selling_price", precision = 38, scale = 2)
     BigDecimal estimatedSellingPrice;
 
+    @Column(name = "actual_material_cost", precision = 38, scale = 2)
+    BigDecimal actualMaterialCost;
+
+    @Column(name = "actual_machine_cost", precision = 38, scale = 2)
+    BigDecimal actualMachineCost;
+
+    @Column(name = "actual_labour_cost", precision = 38, scale = 2)
+    BigDecimal actualLabourCost;
+
+    @Column(name = "actual_total_cost", precision = 38, scale = 2)
+    BigDecimal actualTotalCost;
+
+    @Column(name = "variance_material", precision = 38, scale = 2)
+    BigDecimal varianceMaterial;
+
+    @Column(name = "variance_machine", precision = 38, scale = 2)
+    BigDecimal varianceMachine;
+
+    @Column(name = "variance_total", precision = 38, scale = 2)
+    BigDecimal varianceTotal;
+
     @Column(name = "valid_upto")
     Instant validUpto;
 
     @Column(name = "prepared_by", length = 100)
     String preparedBy;
-
+    @Column(name = "prepared_date")
+    Instant preparedDate;
     @Column(name = "approved_by", length = 100)
     String approvedBy;
+    @Column(name = "approved_date")
+    Instant approvedDate;
 
     @Column(length = 500)
     String remarks;

@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useCallback, useMemo } from 'react
 import type { ReactNode } from 'react';
 import { authApi } from '../api/authApi';
 import type { LoginRequest } from '../api/authApi';
-import { getRolePermissions, normalizeRole, type PermissionModule, type PermissionAction, type PermissionKey } from '../config/rbac';
+import { getRolePermissions, type PermissionModule, type PermissionAction, type PermissionKey } from '../config/rbac';
 
 interface User { username: string; role: string; }
 interface AuthContextType {

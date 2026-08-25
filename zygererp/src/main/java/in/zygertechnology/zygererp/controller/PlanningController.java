@@ -3,6 +3,7 @@ package in.zygertechnology.zygererp.controller;
 import in.zygertechnology.zygererp.service.DocumentFacade;
 import in.zygertechnology.zygererp.service.ExportService;
 import in.zygertechnology.zygererp.service.PlanningService;
+import in.zygertechnology.zygererp.service.PrintService;
 import in.zygertechnology.zygererp.security.RequirePermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -26,6 +27,7 @@ public class PlanningController {
     private final DocumentFacade svc;
     private final PlanningService planning;
     private final ExportService export;
+    private final PrintService printService;
 
     private static String principalName(Principal p) { return p != null ? p.getName() : "system"; }
 
@@ -98,5 +100,72 @@ public class PlanningController {
     Map<String, Object> populateWo(@PathVariable Long id) {
         in.zygertechnology.zygererp.entity.WorkOrder wo = planning.populateFromBomAndRoute(id);
         return svc.toRow(wo);
+    }
+
+    @PostMapping("/production-bom/{id}/revise")
+    Map<String, Object> reviseBom(@PathVariable Long id, @RequestBody Map<String, String> body, Principal p) {
+        String newVersion = body.getOrDefault("newVersion", "2.0");
+        in.zygertechnology.zygererp.entity.ProductionBOM newBom = planning.createBomRevision(id, newVersion, principalName(p));
+        return svc.toRow(newBom);
+    }
+
+    @PostMapping("/work-order/create-from-so")
+    Map<String, Object> createWoFromSo(@RequestBody Map<String, Object> body, Principal p) {
+        Long soId = Long.parseLong(String.valueOf(body.get("salesOrderId")));
+        Long soItemId = body.get("salesOrderItemId") != null ? Long.parseLong(String.valueOf(body.get("salesOrderItemId"))) : null;
+        int qty = body.get("quantity") != null ? Integer.parseInt(String.valueOf(body.get("quantity"))) : 0;
+        in.zygertechnology.zygererp.entity.WorkOrder wo = planning.createWorkOrderFromSO(soId, soItemId, qty, principalName(p));
+        return svc.toRow(wo);
+    }
+
+    // ── FRS §18: Work Order Print/PDF ──
+
+    @GetMapping("/work-order/{id}/print")
+    ResponseEntity<byte[]> printWorkOrder(@PathVariable Long id) {
+        Map<String, Object> doc = svc.getRow("work-order", id);
+        byte[] pdf = printService.workOrder(doc);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=WO-" + String.valueOf(doc.get("woNumber")) + ".pdf")
+                .contentType(MediaType.APPLICATION_PDF)
+                .body(pdf);
+    }
+
+    // ── FRS §19.3: Status History ──
+
+    @GetMapping("/work-order/{id}/status-history")
+    List<Map<String, Object>> woStatusHistory(@PathVariable Long id) {
+        return planning.getWorkOrderStatusHistory(id);
+    }
+
+    // ── FRS §17: Reports ──
+
+    @GetMapping("/work-order/reports/overdue")
+    Map<String, Object> overdueWorkOrders(@RequestParam Map<String, String> q) {
+        return planning.getOverdueWorkOrders(q);
+    }
+
+    @GetMapping("/work-order/reports/shortage")
+    Map<String, Object> materialShortageReport(@RequestParam Map<String, String> q) {
+        return planning.getMaterialShortageReport(q);
+    }
+
+    @GetMapping("/work-order/reports/status-summary")
+    Map<String, Object> woStatusSummary() {
+        return planning.getWoStatusSummary();
+    }
+
+    @GetMapping("/work-order/reports/completion")
+    Map<String, Object> completionReport(@RequestParam Map<String, String> q) {
+        return planning.getCompletionReport(q);
+    }
+
+    @GetMapping("/work-order/reports/so-pending")
+    Map<String, Object> soPendingReport(@RequestParam Map<String, String> q) {
+        return planning.getSoPendingReport(q);
+    }
+
+    @GetMapping("/work-order/reports/open")
+    Map<String, Object> openWorkOrders(@RequestParam Map<String, String> q) {
+        return planning.getOpenWorkOrders(q);
     }
 }

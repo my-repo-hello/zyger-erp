@@ -4,10 +4,12 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "inspection_plan_characteristic")
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class InspectionPlanCharacteristic {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;

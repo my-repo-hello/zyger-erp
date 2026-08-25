@@ -71,7 +71,7 @@ export default function SpcPage() {
       });
       setSpcData(data);
     } catch {
-      toast({ title: 'Failed to load SPC data', type: 'error' });
+      toast('Failed to load SPC data', 'error');
     } finally { setLoading(false); }
   }, [itemCode, selectedChar, toast]);
 

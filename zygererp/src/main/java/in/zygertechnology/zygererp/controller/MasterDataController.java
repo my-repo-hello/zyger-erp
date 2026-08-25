@@ -28,7 +28,13 @@ public class MasterDataController {
                                 InspectionPlanRepository ipRepo,
                                 InspectionPlanCharacteristicRepository ipcRepo,
                                 EscalationRuleRepository escRuleRepo,
-                                EscalationLogRepository escLogRepo) {
+                                EscalationLogRepository escLogRepo,
+                                IdleReasonMasterRepository idleReasonRepo,
+                                PendingReasonMasterRepository pendingReasonRepo,
+                                RejectReasonMasterRepository rejectReasonRepo,
+                                ApprovalStepRepository approvalStepRepo,
+                                in.zygertechnology.zygererp.service.WorkflowStateMachine stateMachine,
+                                jakarta.persistence.EntityManager em) {
         this.plantRepo = plantRepo;
         this.wcRepo = wcRepo;
         this.meterRepo = meterRepo;
@@ -38,6 +44,12 @@ public class MasterDataController {
         this.ipcRepo = ipcRepo;
         this.escRuleRepo = escRuleRepo;
         this.escLogRepo = escLogRepo;
+        this.idleReasonRepo = idleReasonRepo;
+        this.pendingReasonRepo = pendingReasonRepo;
+        this.rejectReasonRepo = rejectReasonRepo;
+        this.approvalStepRepo = approvalStepRepo;
+        this.stateMachine = stateMachine;
+        this.em = em;
     }
 
     // ── PLANT ──
@@ -296,7 +308,128 @@ public class MasterDataController {
             m.put("slaHours", r.getSlaHours());
             m.put("escalateToRole", r.getEscalateToRole());
             m.put("notifyChannels", r.getNotifyChannels());
+            m.put("active", r.getActive());
             return m;
         }).toList();
     }
+
+    @PostMapping("/escalation-rules")
+    public Map<String, Object> createEscalationRule(@RequestBody Map<String, Object> body) {
+        EscalationRule rule = EscalationRule.builder()
+                .docKey((String) body.get("docKey"))
+                .priority((String) body.getOrDefault("priority", "HIGH"))
+                .slaHours((Integer) body.getOrDefault("slaHours", 24))
+                .escalateToRole((String) body.getOrDefault("escalateToRole", "QUALITY_MANAGER"))
+                .notifyChannels((String) body.getOrDefault("notifyChannels", "IN_APP"))
+                .active(true)
+                .build();
+        rule = escRuleRepo.save(rule);
+        return Map.of("id", rule.getId(), "message", "Escalation rule created");
+    }
+
+    @PutMapping("/escalation-rules/{id}")
+    public Map<String, Object> updateEscalationRule(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        EscalationRule rule = escRuleRepo.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Escalation rule not found"));
+        if (body.containsKey("docKey")) rule.setDocKey((String) body.get("docKey"));
+        if (body.containsKey("priority")) rule.setPriority((String) body.get("priority"));
+        if (body.containsKey("slaHours")) rule.setSlaHours((Integer) body.get("slaHours"));
+        if (body.containsKey("escalateToRole")) rule.setEscalateToRole((String) body.get("escalateToRole"));
+        if (body.containsKey("notifyChannels")) rule.setNotifyChannels((String) body.get("notifyChannels"));
+        if (body.containsKey("active")) rule.setActive((Boolean) body.get("active"));
+        escRuleRepo.save(rule);
+        return Map.of("message", "Escalation rule updated");
+    }
+
+    @DeleteMapping("/escalation-rules/{id}")
+    public Map<String, Object> deleteEscalationRule(@PathVariable Long id) {
+        EscalationRule rule = escRuleRepo.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Escalation rule not found"));
+        rule.setActive(false);
+        escRuleRepo.save(rule);
+        return Map.of("message", "Escalation rule deactivated");
+    }
+
+    // ── IDLE REASONS ──
+    private final IdleReasonMasterRepository idleReasonRepo;
+    private final PendingReasonMasterRepository pendingReasonRepo;
+    private final RejectReasonMasterRepository rejectReasonRepo;
+    private final ApprovalStepRepository approvalStepRepo;
+    private final in.zygertechnology.zygererp.service.WorkflowStateMachine stateMachine;
+
+    @GetMapping("/idle-reasons")
+    public List<IdleReasonMaster> listIdleReasons() { return idleReasonRepo.findByActiveTrue(); }
+
+    @PostMapping("/idle-reasons")
+    public Map<String, Object> createIdleReason(@RequestBody IdleReasonMaster r) {
+        r.setId(null);
+        idleReasonRepo.save(r);
+        return Map.of("id", r.getId(), "message", "Idle reason created");
+    }
+
+    // ── PENDING REASONS ──
+    @GetMapping("/pending-reasons")
+    public List<PendingReasonMaster> listPendingReasons() { return pendingReasonRepo.findByActiveTrue(); }
+
+    @PostMapping("/pending-reasons")
+    public Map<String, Object> createPendingReason(@RequestBody PendingReasonMaster r) {
+        r.setId(null);
+        pendingReasonRepo.save(r);
+        return Map.of("id", r.getId(), "message", "Pending reason created");
+    }
+
+    // ── REJECT REASONS ──
+    @GetMapping("/reject-reasons")
+    public List<RejectReasonMaster> listRejectReasons() { return rejectReasonRepo.findByActiveTrue(); }
+
+    @PostMapping("/reject-reasons")
+    public Map<String, Object> createRejectReason(@RequestBody RejectReasonMaster r) {
+        r.setId(null);
+        rejectReasonRepo.save(r);
+        return Map.of("id", r.getId(), "message", "Reject reason created");
+    }
+
+    // ── APPROVAL STEPS ──
+    @GetMapping("/approval-steps")
+    public List<ApprovalStep> listApprovalSteps(@RequestParam String docType, @RequestParam Long docId) {
+        return approvalStepRepo.findByDocTypeAndDocIdOrderByStepNo(docType, docId);
+    }
+
+    @PostMapping("/approval-steps")
+    public Map<String, Object> createApprovalStep(@RequestBody ApprovalStep step) {
+        step.setId(null);
+        approvalStepRepo.save(step);
+        return Map.of("id", step.getId(), "message", "Approval step created");
+    }
+
+    @PutMapping("/approval-steps/{id}/action")
+    public Map<String, Object> approveStep(@PathVariable Long id, @RequestBody Map<String, String> body, java.security.Principal p) {
+        ApprovalStep step = approvalStepRepo.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Approval step not found"));
+        String action = body.getOrDefault("action", "APPROVE").toUpperCase();
+        String comments = body.getOrDefault("comments", "");
+        step.setStatus(action.equals("APPROVE") ? "APPROVED" : "REJECTED");
+        step.setDecidedAt(java.time.Instant.now());
+        step.setComments(comments);
+        step.setApproverUserId(getUserId(p));
+        approvalStepRepo.save(step);
+        return Map.of("message", "Step " + step.getStatus());
+    }
+
+    // ── STATE MACHINE ──
+    @GetMapping("/workflow/allowed-actions")
+    public Map<String, Object> getAllowedActions(@RequestParam String docType, @RequestParam String status) {
+        Set<String> actions = stateMachine.getAllowedActions(docType, status);
+        return Map.of("docType", docType, "status", status, "allowedActions", actions);
+    }
+
+    private Long getUserId(java.security.Principal p) {
+        if (p == null) return null;
+        try {
+            return ((Number) em.createQuery("SELECT u.id FROM AppUser u WHERE u.username = :u")
+                    .setParameter("u", p.getName()).getSingleResult()).longValue();
+        } catch (Exception e) { return null; }
+    }
+
+    private final jakarta.persistence.EntityManager em;
 }

@@ -3,6 +3,7 @@ package in.zygertechnology.zygererp.controller;
 import in.zygertechnology.zygererp.service.DocNumberService;
 import in.zygertechnology.zygererp.entity.*;
 import in.zygertechnology.zygererp.repo.*;
+import in.zygertechnology.zygererp.repository.ResourceMasterRepository;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 import in.zygertechnology.zygererp.security.RequirePermission;
@@ -699,22 +700,51 @@ public class MasterController {
     // ---- Process Master ----
     @GetMapping("/api/master/processes")
     List<Map<String,Object>> processList() {
-        return processMasters.findAll().stream().filter(ProcessMaster::isActive).map(p -> {
-            Map<String,Object> m = new LinkedHashMap<>();
-            m.put("id", p.getId()); m.put("code", p.getCode()); m.put("name", p.getName());
-            m.put("description", p.getDescription()); m.put("cycleTime", p.getCycleTime());
-            m.put("setupTime", p.getSetupTime()); m.put("unitRate", p.getUnitRate());
-            m.put("machineRequired", p.isMachineRequired()); m.put("inspection", p.isInspection());
-            m.put("active", p.isActive());
-            m.put("processGroupId", p.getProcessGroup() != null ? p.getProcessGroup().getId() : null);
-            m.put("processGroupCode", p.getProcessGroup() != null ? p.getProcessGroup().getCode() : null);
-            return m;
-        }).toList();
+        return processMasters.findAll().stream().filter(ProcessMaster::isActive).map(this::toProcessMap).toList();
     }
-    @GetMapping("/api/master/processes/{id}") ProcessMaster getProcess(@PathVariable Long id){
-        return processMasters.findById(id).orElseThrow(() -> new RuntimeException("Process not found"));
+    @GetMapping("/api/master/processes/{id}") Map<String,Object> getProcess(@PathVariable Long id){
+        return toProcessMap(processMasters.findById(id).orElseThrow(() -> new RuntimeException("Process not found")));
     }
-    @PostMapping("/api/master/processes") ProcessMaster createProcess(@RequestBody ProcessMaster p){ p.setId(null); return processMasters.save(p); }
+
+    private Map<String,Object> toProcessMap(ProcessMaster p) {
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("id", p.getId()); m.put("code", p.getCode()); m.put("name", p.getName());
+        m.put("description", p.getDescription()); m.put("cycleTime", p.getCycleTime());
+        m.put("setupTime", p.getSetupTime()); m.put("unitRate", p.getUnitRate());
+        m.put("machineRequired", p.isMachineRequired()); m.put("inspection", p.isInspection());
+        m.put("active", p.isActive());
+        m.put("processGroupId", p.getProcessGroup() != null ? p.getProcessGroup().getId() : null);
+        m.put("processGroupCode", p.getProcessGroup() != null ? p.getProcessGroup().getCode() : null);
+        m.put("processType", p.getProcessType());
+        m.put("requiredResource", p.getRequiredResource() != null ? p.getRequiredResource().getId() : null);
+        m.put("resourceName", p.getResourceName());
+        m.put("resourceType", p.getResourceType());
+        return m;
+    }
+    @PostMapping("/api/master/processes") @Transactional
+    Map<String, Object> createProcess(@RequestBody ObjectNode body) {
+        ProcessMaster p = new ProcessMaster();
+        if (body.has("code")) p.setCode(body.get("code").asText());
+        if (body.has("name")) p.setName(body.get("name").asText());
+        if (body.has("description")) p.setDescription(body.get("description").asText());
+        if (body.has("processType")) p.setProcessType(body.get("processType").asText());
+        if (body.has("cycleTime") && !body.get("cycleTime").isNull()) p.setCycleTime(body.get("cycleTime").decimalValue());
+        if (body.has("setupTime") && !body.get("setupTime").isNull()) p.setSetupTime(body.get("setupTime").decimalValue());
+        if (body.has("unitRate") && !body.get("unitRate").isNull()) p.setUnitRate(body.get("unitRate").decimalValue());
+        if (body.has("machineRequired")) p.setMachineRequired(body.get("machineRequired").asBoolean());
+        if (body.has("inspection")) p.setInspection(body.get("inspection").asBoolean());
+        if (body.has("active")) p.setActive(body.get("active").asBoolean());
+        if (body.has("processGroupId") && !body.get("processGroupId").isNull()) {
+            p.setProcessGroup(processGroups.findById(body.get("processGroupId").asLong()).orElse(null));
+        }
+        if (body.has("requiredResource") && !body.get("requiredResource").isNull()) {
+            p.setRequiredResource(resourceMasters.findById(body.get("requiredResource").asLong()).orElse(null));
+        }
+        p.setId(null);
+        deriveResourceFields(p);
+        ProcessMaster saved = processMasters.save(p);
+        return toProcessMap(saved);
+    }
     @PutMapping("/api/master/processes/{id}") @Transactional ProcessMaster updateProcess(@PathVariable Long id, @RequestBody ObjectNode body){
         ProcessMaster e = processMasters.findById(id).orElseThrow(() -> new RuntimeException("Process not found"));
         ProcessMaster merged = mergePatch(e, body);
@@ -724,9 +754,32 @@ public class MasterController {
         } else if (body.has("processGroupId") && body.get("processGroupId").isNull()) {
             merged.setProcessGroup(null);
         }
+        if (body.has("requiredResource") && !body.get("requiredResource").isNull()) {
+            merged.setRequiredResource(resourceMasters.findById(body.get("requiredResource").asLong()).orElse(null));
+        } else if (body.has("requiredResource") && body.get("requiredResource").isNull()) {
+            merged.setRequiredResource(null);
+        }
+        deriveResourceFields(merged);
         return processMasters.save(merged);
     }
     @DeleteMapping("/api/master/processes/{id}") void delProcess(@PathVariable Long id){ processMasters.findById(id).ifPresent(p -> { p.setActive(false); processMasters.save(p); }); }
+
+    /** FRS §4.2: Server-side auto-derive — selecting resource auto-fills resourceName, resourceType; Vendor → outsource. */
+    private void deriveResourceFields(ProcessMaster p) {
+        if (p.getRequiredResource() != null) {
+            ResourceMaster res = p.getRequiredResource();
+            p.setResourceName(res.getResourceName());
+            p.setResourceType(res.getResourceType());
+            if ("Vendor".equalsIgnoreCase(res.getResourceType()) && (p.getProcessType() == null || p.getProcessType().isBlank())) {
+                p.setProcessType("OUTSOURCE");
+            } else if ("Machine".equalsIgnoreCase(res.getResourceType()) && (p.getProcessType() == null || p.getProcessType().isBlank())) {
+                p.setProcessType("MACHINING");
+            }
+        } else {
+            p.setResourceName(null);
+            p.setResourceType(null);
+        }
+    }
 
     // ---- Instrument Master ----
     @GetMapping("/api/master/instruments")
@@ -1003,4 +1056,67 @@ public class MasterController {
 
     @DeleteMapping("/api/master/users/{id}")
     void deleteUser(@PathVariable Long id) { userRepo.deleteById(id); }
+
+    // ===========================
+    // ---- Resource Master (FRS §4.3) ----
+    // ===========================
+
+    private final ResourceMasterRepository resourceMasters;
+
+    @GetMapping("/api/master/resources")
+    List<ResourceMaster> resources() { return resourceMasters.findByActiveTrue(); }
+
+    @GetMapping("/api/master/resources/{id}")
+    ResourceMaster getResource(@PathVariable Long id) { return resourceMasters.findById(id).orElseThrow(); }
+
+    @PostMapping("/api/master/resources")
+    ResourceMaster createResource(@RequestBody ResourceMaster r) {
+        r.setId(null);
+        if (resourceMasters.existsByResourceCode(r.getResourceCode())) {
+            throw new RuntimeException("Resource code already exists: " + r.getResourceCode());
+        }
+        if (resourceMasters.existsByResourceNameIgnoreCase(r.getResourceName())) {
+            throw new RuntimeException("A resource with this name already exists.");
+        }
+        if (r.getResourceType() == null || r.getResourceType().isBlank()) {
+            throw new RuntimeException("Resource Type is mandatory.");
+        }
+        if (r.getCapacity() == null || r.getCapacity().signum() <= 0) {
+            throw new RuntimeException("Capacity must be greater than 0.");
+        }
+        r.setActive(Boolean.TRUE);
+        r.setStatus("Active");
+        r.setCreatedAt(java.time.Instant.now());
+        return resourceMasters.save(r);
+    }
+
+    @PutMapping("/api/master/resources/{id}")
+    @Transactional ResourceMaster updateResource(@PathVariable Long id, @RequestBody ResourceMaster r) {
+        ResourceMaster existing = resourceMasters.findById(id).orElseThrow();
+        existing.setResourceName(r.getResourceName());
+        existing.setResourceType(r.getResourceType());
+        existing.setCapacity(r.getCapacity());
+        existing.setCapacityUom(r.getCapacityUom());
+        existing.setDepartment(r.getDepartment());
+        existing.setHourlyRate(r.getHourlyRate());
+        existing.setDescription(r.getDescription());
+        existing.setUpdatedAt(java.time.Instant.now());
+        return resourceMasters.save(existing);
+    }
+
+    @DeleteMapping("/api/master/resources/{id}")
+    void deleteResource(@PathVariable Long id) {
+        resourceMasters.findById(id).ifPresent(r -> {
+            r.setActive(false);
+            r.setStatus("Inactive");
+            resourceMasters.save(r);
+        });
+    }
+
+    // FRS §4.3: auto-derive process_type when Resource is Vendor
+    @GetMapping("/api/master/resources/{id}/suggest-process-type")
+    String suggestProcessType(@PathVariable Long id) {
+        ResourceMaster r = resourceMasters.findById(id).orElseThrow();
+        return "Vendor".equalsIgnoreCase(r.getResourceType()) ? "Outsource" : "Insource";
+    }
 }

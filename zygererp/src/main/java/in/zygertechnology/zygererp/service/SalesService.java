@@ -289,6 +289,27 @@ public class SalesService {
                         BigDecimal dispatched = so.getDispatchedQty() == null ? BigDecimal.ZERO : so.getDispatchedQty();
                         so.setPendingQty(total.subtract(dispatched));
                     }
+                    // FRS §4.9: Auto-generate schedule lines for Open SOs
+                    if ("Open".equalsIgnoreCase(so.getSoType()) && so.getLines() != null && (so.getSchedules() == null || so.getSchedules().isEmpty())) {
+                        List<SalesOrderSchedule> schedules = new ArrayList<>();
+                        int schedNo = 1;
+                        for (SalesOrderItem item : (List<SalesOrderItem>) so.getLines()) {
+                            SalesOrderSchedule sched = new SalesOrderSchedule();
+                            sched.setDoc(so);
+                            sched.setScheduleNumber(String.format("SCH-%s-%03d", so.getDocNo() != null ? so.getDocNo() : so.getId(), schedNo++));
+                            sched.setItemCode(item.getItemName() != null ? item.getItemName() : "");
+                            sched.setScheduledQty(item.getOrderQty());
+                            sched.setScheduledDate(item.getRequiredDeliveryDate() != null ? item.getRequiredDeliveryDate() : so.getDeliveryDate());
+                            sched.setDispatchedQty(BigDecimal.ZERO);
+                            sched.setPendingQty(item.getOrderQty());
+                            sched.setStatus("PENDING");
+                            schedules.add(sched);
+                        }
+                        if (so.getSchedules() != null) {
+                            so.getSchedules().clear();
+                            so.getSchedules().addAll(schedules);
+                        }
+                    }
                 }
             }
             case "sales-dc" -> {

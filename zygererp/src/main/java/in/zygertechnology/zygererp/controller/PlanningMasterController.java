@@ -41,6 +41,10 @@ public class PlanningMasterController {
     private final MachineMasterRepository machines;
     private final DocNumberService numbers;
     private final StockBalanceRepository stockBalances;
+    private final jakarta.persistence.EntityManager em;
+    private final in.zygertechnology.zygererp.repository.ApprovalStepRepository approvalSteps;
+    private final in.zygertechnology.zygererp.repository.EscalationRuleRepository escalationRules;
+    private final in.zygertechnology.zygererp.service.NotificationService notificationService;
 
     private String principalName(Principal p) { return p != null ? p.getName() : "system"; }
 
@@ -475,6 +479,15 @@ public class PlanningMasterController {
             String machineCode = entry.getKey();
             BigDecimal plannedLoad = entry.getValue();
             BigDecimal available = availableByMachine.getOrDefault(machineCode, BigDecimal.valueOf(8));
+
+            // FRS §7.2: Check machine status — BREAKDOWN/UNDER_MAINTENANCE machines get 0 available hours
+            boolean isBlocked = machines.findByCode(machineCode)
+                    .map(m -> "BREAKDOWN".equals(m.getStatus()) || "UNDER_MAINTENANCE".equals(m.getStatus()))
+                    .orElse(false);
+            if (isBlocked) {
+                available = BigDecimal.ZERO;
+            }
+
             BigDecimal utilPct = available.compareTo(BigDecimal.ZERO) > 0
                 ? plannedLoad.multiply(BigDecimal.valueOf(100)).divide(available, 2, RoundingMode.HALF_UP)
                 : BigDecimal.ZERO;
@@ -547,11 +560,13 @@ public class PlanningMasterController {
             case "submit-ecr":
                 ec.setEcrStatus("SUBMITTED");
                 ec.setStatus("SUBMITTED");
+                createApprovalSteps("ENGINEERING_CHANGE", ec.getId(), List.of("PLANNING_MANAGER", "PLANT_HEAD"), principal);
                 break;
             case "approve-ecr":
                 ec.setEcrStatus("APPROVED");
                 ec.setStatus("APPROVED");
                 ec.setApprovedBy(principalName(principal));
+                advanceApprovalStep("ENGINEERING_CHANGE", ec.getId(), principalName(principal));
                 break;
             case "reject-ecr":
                 ec.setEcrStatus("REJECTED");
@@ -694,7 +709,30 @@ public class PlanningMasterController {
         run.setStatus("COMPLETE");
         run.setGeneratedBy(principalName(principal));
         run.setUpdatedAt(Instant.now());
-        return gapAnalysisRuns.save(run);
+        GapAnalysisRun saved = gapAnalysisRuns.save(run);
+
+        // Escalation: notify roles for CRITICAL/HIGH gaps
+        List<GapAnalysisResult> criticalResults = gapAnalysisResults.findByRunIdAndSeverityIn(
+                saved.getId(), List.of("CRITICAL", "HIGH"));
+        if (!criticalResults.isEmpty()) {
+            List<EscalationRule> rules = escalationRules.findByDocKeyAndActiveTrue("gap-analysis");
+            for (EscalationRule rule : rules) {
+                boolean matches = criticalResults.stream().anyMatch(r -> rule.getPriority().equals(r.getSeverity()));
+                if (matches) {
+                    long criticalCount = criticalResults.stream().filter(r -> rule.getPriority().equals(r.getSeverity())).count();
+                    notificationService.notify(
+                            "GAP_ESCALATION", "PLANNING", "GapAnalysisRun", saved.getId(),
+                            rule.getPriority(),
+                            String.format("[%s] Gap Analysis %s: %d %s gaps found in run %s",
+                                    rule.getPriority(), rule.getEscalateToRole(), criticalCount,
+                                    rule.getPriority().toLowerCase(), saved.getRunNumber()),
+                            saved.getRunNumber()
+                    );
+                }
+            }
+        }
+
+        return saved;
     }
 
     // ===========================
@@ -773,10 +811,12 @@ public class PlanningMasterController {
             case "submit":
                 ce.setStatus("SUBMITTED");
                 ce.setPreparedBy(principalName(principal));
+                createApprovalSteps("COST_ESTIMATION", ce.getId(), List.of("COST_ACCOUNTANT", "PLANT_HEAD"), principal);
                 break;
             case "approve":
                 ce.setStatus("APPROVED");
                 ce.setApprovedBy(principalName(principal));
+                advanceApprovalStep("COST_ESTIMATION", ce.getId(), principalName(principal));
                 break;
             default:
                 throw new RuntimeException("Unknown action: " + action);
@@ -887,6 +927,61 @@ public class PlanningMasterController {
         return costEstimations.save(ce);
     }
 
+    // ---- Cost Estimate vs Actual Reconciliation ----
+    @PostMapping("/api/v1/planning/cost-estimations/{id}/reconcile")
+    public Map<String, Object> reconcileCostEstimation(@PathVariable Long id, Principal principal) {
+        CostEstimation ce = costEstimations.findById(id).orElseThrow(() -> new RuntimeException("Cost Estimation not found"));
+
+        String itemCode = ce.getItemCode();
+        List<WorkOrder> wos = workOrders.findByItemCode(itemCode);
+
+        BigDecimal actualMachine = BigDecimal.ZERO;
+        for (WorkOrder wo : wos) {
+            // Machine cost from production entries: run_time × work_center.hourly_rate
+            Number machCost = (Number) em.createNativeQuery(
+                    "SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(sfe.end_time, NOW()) - sfe.start_time)) / 3600 * " +
+                    "COALESCE(wc.hourly_rate, 0)), 0) " +
+                    "FROM shop_floor_entry sfe " +
+                    "LEFT JOIN work_center wc ON wc.code = sfe.machine_code " +
+                    "WHERE sfe.work_order_no = :woNo AND sfe.status = 'APPROVED' AND sfe.deleted_at IS NULL")
+                    .setParameter("woNo", wo.getDocNo())
+                    .getSingleResult();
+            actualMachine = actualMachine.add(machCost != null ? new BigDecimal(machCost.toString()) : BigDecimal.ZERO);
+        }
+
+        BigDecimal actualTotal = actualMachine;
+        BigDecimal estMaterial = ce.getTotalMaterialCost() != null ? ce.getTotalMaterialCost() : BigDecimal.ZERO;
+        BigDecimal estMachine = ce.getTotalMachineCost() != null ? ce.getTotalMachineCost() : BigDecimal.ZERO;
+        BigDecimal estTotal = ce.getTotalManufacturingCost() != null ? ce.getTotalManufacturingCost() : BigDecimal.ZERO;
+
+        BigDecimal varMachine = actualMachine.subtract(estMachine);
+        BigDecimal varTotal = actualTotal.subtract(estTotal);
+
+        ce.setActualMachineCost(actualMachine);
+        ce.setActualTotalCost(actualTotal);
+        ce.setVarianceMachine(varMachine);
+        ce.setVarianceTotal(varTotal);
+        ce.setUpdatedAt(Instant.now());
+        costEstimations.save(ce);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("estimationNumber", ce.getEstimationNumber());
+        result.put("itemCode", ce.getItemCode());
+        result.put("workOrders", wos.stream().map(WorkOrder::getDocNo).toList());
+        result.put("estimated", Map.of(
+                "material", estMaterial, "machine", estMachine, "total", estTotal));
+        result.put("actual", Map.of(
+                "machine", actualMachine, "total", actualTotal));
+        result.put("variance", Map.of(
+                "machine", varMachine, "total", varTotal));
+        if (estTotal.compareTo(BigDecimal.ZERO) > 0) {
+            result.put("variancePercent", Map.of(
+                    "machine", varMachine.multiply(BigDecimal.valueOf(100)).divide(estTotal, 2, RoundingMode.HALF_UP),
+                    "total", varTotal.multiply(BigDecimal.valueOf(100)).divide(estTotal, 2, RoundingMode.HALF_UP)));
+        }
+        return result;
+    }
+
     // ===========================
     // ---- Helper Methods -------
     // ===========================
@@ -898,5 +993,32 @@ public class PlanningMasterController {
         if (pct.compareTo(BigDecimal.valueOf(20)) > 0) return "HIGH";
         if (pct.compareTo(BigDecimal.valueOf(10)) > 0) return "MEDIUM";
         return "LOW";
+    }
+
+    private void createApprovalSteps(String docType, Long docId, List<String> roles, Principal principal) {
+        approvalSteps.deleteByDocTypeAndDocId(docType, docId);
+        int step = 1;
+        for (String role : roles) {
+            ApprovalStep as = new ApprovalStep();
+            as.setDocType(docType);
+            as.setDocId(docId);
+            as.setStepNo(step++);
+            as.setRoleRequired(role);
+            as.setStatus("PENDING");
+            approvalSteps.save(as);
+        }
+    }
+
+    private void advanceApprovalStep(String docType, Long docId, String decidedBy) {
+        List<ApprovalStep> steps = approvalSteps.findByDocTypeAndDocIdOrderByStepNoAsc(docType, docId);
+        for (ApprovalStep s : steps) {
+            if ("PENDING".equals(s.getStatus())) {
+                s.setStatus("APPROVED");
+                s.setDecidedAt(Instant.now());
+                s.setComments("Approved by " + decidedBy);
+                approvalSteps.save(s);
+                break;
+            }
+        }
     }
 }

@@ -33,6 +33,8 @@ public class SalesOrderItem extends BaseLine implements LineEntity {
     @Column(name="surface_finish_requirement", length=200) String surfaceFinishRequirement;
     @Column(name="heat_treatment_required") Boolean heatTreatmentRequired = false;
     @Column(name="certificate_required", length=50) String certificateRequired;
+    /** FRS §4.9: pending qty = quantity − Σ(committed to Work Orders) */
+    @Column(name="pending_qty") BigDecimal pendingQty;
 
     @Override public BigDecimal getQty() { return orderQty == null ? BigDecimal.ZERO : orderQty; }
     @Override public BigDecimal getRate() { return unitPrice; }

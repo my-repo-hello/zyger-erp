@@ -4,10 +4,12 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "work_center_master")
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class WorkCenterMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;

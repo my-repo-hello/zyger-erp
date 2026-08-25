@@ -131,6 +131,14 @@ export default function DispatchPlanScreen() {
             <input className="in" value={String(form.customerName ?? '')} onChange={(e) => set('customerName', e.target.value)} />
           </label>
           <label className="fld">
+            <span>Customer PO No</span>
+            <input className="in" value={String(form.customerPoNumber ?? '')} onChange={(e) => set('customerPoNumber', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Delivery Address</span>
+            <input className="in" value={String(form.deliveryAddress ?? '')} onChange={(e) => set('deliveryAddress', e.target.value)} />
+          </label>
+          <label className="fld">
             <span>Transport Mode</span>
             <select className="in" value={String(form.transportMode ?? '')} onChange={(e) => set('transportMode', e.target.value)}>
               <option value="">Select...</option>
@@ -138,6 +146,8 @@ export default function DispatchPlanScreen() {
               <option value="RAIL">Rail</option>
               <option value="AIR">Air</option>
               <option value="SEA">Sea</option>
+              <option value="COURIER">Courier</option>
+              <option value="CUSTOMER_PICKUP">Customer Pickup</option>
             </select>
           </label>
           <label className="fld">
@@ -147,6 +157,22 @@ export default function DispatchPlanScreen() {
           <label className="fld">
             <span>Vehicle Number</span>
             <input className="in" value={String(form.vehicleNumber ?? '')} onChange={(e) => set('vehicleNumber', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>LR Number</span>
+            <input className="in" value={String(form.lrNumber ?? '')} onChange={(e) => set('lrNumber', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>E-Way Bill No</span>
+            <input className="in" value={String(form.ewayBillNumber ?? '')} onChange={(e) => set('ewayBillNumber', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Total Qty</span>
+            <input className="in" type="number" step="0.01" value={String(form.totalQty ?? '')} onChange={(e) => set('totalQty', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
+            <span>Total Weight (kg)</span>
+            <input className="in" type="number" step="0.01" value={String(form.totalWeight ?? '')} onChange={(e) => set('totalWeight', e.target.value ? Number(e.target.value) : null)} />
           </label>
           <label className="fld">
             <span>Status</span>
@@ -171,7 +197,10 @@ export default function DispatchPlanScreen() {
 
       <div className="panel">
         <div className="toolbar">
-          <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="searchwrap">
+            <span className="material-symbols-rounded">search</span>
+            <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
           <span className="count">{total} plans</span>
         </div>
         <div className="twrap">

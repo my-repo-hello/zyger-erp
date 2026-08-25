@@ -353,16 +353,46 @@ public class ScheduledJobs {
                 double runHrs = Math.max(0, plannedHrs - downtimeHrs);
                 double availability = plannedHrs > 0 ? runHrs / plannedHrs : 0;
 
-                // Insert OEE record with computed availability
+                // FRS §7.5: Compute performance and quality from production data
+                Number goodQty = (Number) em.createNativeQuery(
+                        "SELECT COALESCE(SUM(completed_quantity), 0) FROM shop_floor_entry " +
+                        "WHERE machine_code = :mc AND DATE(doc_date) = :date AND status = 'COMPLETED' AND deleted_at IS NULL")
+                        .setParameter("mc", machineCode)
+                        .setParameter("date", yesterday)
+                        .getSingleResult();
+                Number totalQty = (Number) em.createNativeQuery(
+                        "SELECT COALESCE(SUM(completed_quantity + COALESCE(rejected_quantity,0) + COALESCE(scrap_quantity,0)), 0) " +
+                        "FROM shop_floor_entry " +
+                        "WHERE machine_code = :mc AND DATE(doc_date) = :date AND status = 'COMPLETED' AND deleted_at IS NULL")
+                        .setParameter("mc", machineCode)
+                        .setParameter("date", yesterday)
+                        .getSingleResult();
+
+                double good = goodQty != null ? goodQty.doubleValue() : 0;
+                double total = totalQty != null ? totalQty.doubleValue() : 0;
+                double quality = total > 0 ? good / total : 0.95;
+                // Performance: (idealCycleTimeSec × totalQty) / (runHrs × 3600)
+                // Default 50 units/hr ideal rate = 72 sec/unit
+                double performance = runHrs > 0 ? Math.min(1.0, (total * 72) / (runHrs * 3600)) : 0.85;
+                double oee = availability * performance * quality;
+
+                // Insert OEE record with computed values
                 em.createNativeQuery(
-                        "INSERT INTO oee_daily (machine_code, entry_date, planned_hours, actual_run_hours, " +
-                        "availability, performance, quality, plant_id, created_at) " +
-                        "VALUES (:mc, :dt, :ph, :arh, :av, 0.85, 0.95, 1, NOW())")
+                        "INSERT INTO oee_daily (machine_code, oee_date, planned_time_min, run_time_min, downtime_min, " +
+                        "good_qty, total_qty, ideal_cycle_time_sec, availability, performance, quality_rate, oee, plant_id, created_at) " +
+                        "VALUES (:mc, :dt, :ptm, :rtm, :dmt, :gq, :tq, :ict, :av, :pf, :qr, :oee, 1, NOW())")
                         .setParameter("mc", machineCode)
                         .setParameter("dt", yesterday)
-                        .setParameter("ph", plannedHrs)
-                        .setParameter("arh", runHrs)
+                        .setParameter("ptm", plannedHrs * 60)
+                        .setParameter("rtm", runHrs * 60)
+                        .setParameter("dmt", downtimeHrs * 60)
+                        .setParameter("gq", good)
+                        .setParameter("tq", total)
+                        .setParameter("ict", 72.0)
                         .setParameter("av", availability)
+                        .setParameter("pf", performance)
+                        .setParameter("qr", quality)
+                        .setParameter("oee", oee)
                         .executeUpdate();
             }
             log.info("[OEE Populate] Processed {} machines for {}", prodMachines.size(), yesterday);
@@ -429,11 +459,14 @@ public class ScheduledJobs {
                 long daysSince = java.time.Duration.between(approvedAt, Instant.now()).toDays();
 
                 if (daysSince >= 90) {
-                    log.warn("[CAPA Effectiveness] {} is {} days past approval with no effectiveness check!", docNo, daysSince);
+                    notifyOnce("CAPA_EFFECTIVENESS_OVERDUE", "QUALITY", "QualityCapa", id,
+                            "CRITICAL", "CAPA " + docNo + " is " + daysSince + " days past approval — effectiveness check OVERDUE!", docNo);
                 } else if (daysSince >= 60) {
-                    log.warn("[CAPA Effectiveness] {} is {} days past approval — effectiveness check due.", docNo, daysSince);
+                    notifyOnce("CAPA_EFFECTIVENESS_DUE_60", "QUALITY", "QualityCapa", id,
+                            "HIGH", "CAPA " + docNo + " — 60-day effectiveness check due.", docNo);
                 } else if (daysSince >= 30) {
-                    log.info("[CAPA Effectiveness] {} — 30-day effectiveness check reminder.", docNo);
+                    notifyOnce("CAPA_EFFECTIVENESS_DUE_30", "QUALITY", "QualityCapa", id,
+                            "MEDIUM", "CAPA " + docNo + " — 30-day effectiveness check reminder.", docNo);
                 }
             }
         } catch (Exception ex) {

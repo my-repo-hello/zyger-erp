@@ -1,11 +1,13 @@
 package in.zygertechnology.zygererp.entity;
 
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 import jakarta.persistence.*;
 import lombok.Getter; import lombok.Setter;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @MappedSuperclass @Getter @Setter
+@EntityListeners(AuditEntityListener.class)
 public abstract class BaseLine {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
 

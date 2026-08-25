@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
@@ -114,6 +114,39 @@ export default function CompanyInfoScreen() {
       setLoading(false);
     })();
   }, []);
+
+  const [uploadingLogo, setUploadingLogo] = useState<string | null>(null);
+  const companyLogoRef = useRef<HTMLInputElement>(null);
+  const isoLogoRef = useRef<HTMLInputElement>(null);
+  const bisLogoRef = useRef<HTMLInputElement>(null);
+
+  const handleLogoUpload = async (file: File, type: 'company' | 'iso' | 'bis') => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { toast('Logo must be under 10MB.', 'error'); return; }
+    if (!file.type.startsWith('image/')) { toast('Only image files are allowed.', 'error'); return; }
+    setUploadingLogo(type);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('type', type);
+      const { data } = await apiClient.post('/master/company-info/logo', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const field = type === 'company' ? 'companyLogoUrl' : type === 'iso' ? 'isoLogoUrl' : 'bisLogoUrl';
+      setFld(field, data.url);
+      toast(`${type.charAt(0).toUpperCase() + type.slice(1)} logo uploaded.`);
+    } catch {
+      toast('Logo upload failed.', 'error');
+    }
+    setUploadingLogo(null);
+  };
+
+  const logoPreviewUrl = (url?: string) => {
+    if (!url) return undefined;
+    const type = url.includes('/iso/') ? 'iso' : url.includes('/bis/') ? 'bis' : 'company';
+    const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+    return baseUrl.replace(/\/$/, '') + '/master/company-info/logo/' + type;
+  };
 
   const setFld = (k: keyof CompanyInfoState, v: any) => setForm(c => ({ ...c, [k]: v }));
 
@@ -433,37 +466,61 @@ export default function CompanyInfoScreen() {
               {/* COMPANY LOGO */}
               <div style={{ border: '2px dashed #bfdbfe', borderRadius: '12px', padding: '24px', textAlign: 'center', background: '#faf5ff' }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#1e3a8a', marginBottom: '16px' }}>COMPANY LOGO</div>
-                <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', background: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span className="material-symbols-rounded" style={{ fontSize: '32px', color: '#3b82f6' }}>image</span>
-                </div>
-                <button type="button" className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
-                  <span className="material-symbols-rounded">upload</span> Upload
+                <input ref={companyLogoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f, 'company'); e.target.value = ''; }} />
+                {form.companyLogoUrl ? (
+                  <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', borderRadius: '12px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent' }}>
+                    <img src={logoPreviewUrl(form.companyLogoUrl)} alt="Company Logo" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'transparent' }} />
+                  </div>
+                ) : (
+                  <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', background: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="material-symbols-rounded" style={{ fontSize: '32px', color: '#3b82f6' }}>image</span>
+                  </div>
+                )}
+                <button type="button" className="btn btn-sm btn-secondary" disabled={uploadingLogo === 'company'} onClick={() => companyLogoRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
+                  <span className="material-symbols-rounded">{uploadingLogo === 'company' ? 'hourglass_empty' : 'upload'}</span> {uploadingLogo === 'company' ? 'Uploading...' : 'Upload'}
                 </button>
-                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>PNG, JPG up to 2MB</div>
+                {form.companyLogoUrl && <button type="button" className="btn btn-sm" style={{ marginLeft: '4px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => setFld('companyLogoUrl', '')}>Remove</button>}
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>PNG, JPG up to 10MB</div>
               </div>
 
               {/* ISO LOGO */}
               <div style={{ border: '2px dashed #bfdbfe', borderRadius: '12px', padding: '24px', textAlign: 'center', background: '#faf5ff' }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#1e3a8a', marginBottom: '16px' }}>ISO LOGO</div>
-                <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', background: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span className="material-symbols-rounded" style={{ fontSize: '32px', color: '#3b82f6' }}>image</span>
-                </div>
-                <button type="button" className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
-                  <span className="material-symbols-rounded">upload</span> Upload
+                <input ref={isoLogoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f, 'iso'); e.target.value = ''; }} />
+                {form.isoLogoUrl ? (
+                  <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', borderRadius: '12px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent' }}>
+                    <img src={logoPreviewUrl(form.isoLogoUrl)} alt="ISO Logo" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'transparent' }} />
+                  </div>
+                ) : (
+                  <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', background: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="material-symbols-rounded" style={{ fontSize: '32px', color: '#3b82f6' }}>image</span>
+                  </div>
+                )}
+                <button type="button" className="btn btn-sm btn-secondary" disabled={uploadingLogo === 'iso'} onClick={() => isoLogoRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
+                  <span className="material-symbols-rounded">{uploadingLogo === 'iso' ? 'hourglass_empty' : 'upload'}</span> {uploadingLogo === 'iso' ? 'Uploading...' : 'Upload'}
                 </button>
-                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>PNG, JPG up to 2MB</div>
+                {form.isoLogoUrl && <button type="button" className="btn btn-sm" style={{ marginLeft: '4px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => setFld('isoLogoUrl', '')}>Remove</button>}
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>PNG, JPG up to 10MB</div>
               </div>
 
               {/* BIS LOGO */}
               <div style={{ border: '2px dashed #bfdbfe', borderRadius: '12px', padding: '24px', textAlign: 'center', background: '#faf5ff' }}>
                 <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#1e3a8a', marginBottom: '16px' }}>BIS LOGO</div>
-                <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', background: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span className="material-symbols-rounded" style={{ fontSize: '32px', color: '#3b82f6' }}>image</span>
-                </div>
-                <button type="button" className="btn btn-sm btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
-                  <span className="material-symbols-rounded">upload</span> Upload
+                <input ref={bisLogoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f, 'bis'); e.target.value = ''; }} />
+                {form.bisLogoUrl ? (
+                  <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', borderRadius: '12px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent' }}>
+                    <img src={logoPreviewUrl(form.bisLogoUrl)} alt="BIS Logo" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'transparent' }} />
+                  </div>
+                ) : (
+                  <div style={{ width: '64px', height: '64px', margin: '0 auto 12px', background: '#eff6ff', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span className="material-symbols-rounded" style={{ fontSize: '32px', color: '#3b82f6' }}>image</span>
+                  </div>
+                )}
+                <button type="button" className="btn btn-sm btn-secondary" disabled={uploadingLogo === 'bis'} onClick={() => bisLogoRef.current?.click()} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginBottom: '8px' }}>
+                  <span className="material-symbols-rounded">{uploadingLogo === 'bis' ? 'hourglass_empty' : 'upload'}</span> {uploadingLogo === 'bis' ? 'Uploading...' : 'Upload'}
                 </button>
-                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>PNG, JPG up to 2MB</div>
+                {form.bisLogoUrl && <button type="button" className="btn btn-sm" style={{ marginLeft: '4px', color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => setFld('bisLogoUrl', '')}>Remove</button>}
+                <div style={{ fontSize: '0.75rem', color: '#94a3b8' }}>PNG, JPG up to 10MB</div>
               </div>
             </div>
           </div>

@@ -27,8 +27,8 @@
                 <maxHistory>30</maxHistory>
                 <totalSizeCap>1GB</totalSizeCap>
             </rollingPolicy>
-            <encoder>
-                <pattern>${LOG_PATTERN}</pattern>
+            <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+                <pattern>{"timestamp":"%date{yyyy-MM-dd'T'HH:mm:ss.SSS}","thread":"%thread","correlationId":"%X{correlationId:-}","level":"%level","logger":"%logger{36}","message":"%msg"}%n</pattern>
             </encoder>
         </appender>
         <root level="WARN">

@@ -110,11 +110,17 @@ public class AuthController {
                 .filter(AppUser::isActive)
                 .orElseThrow(() -> new IllegalArgumentException("User account is missing or disabled"));
 
+        // FRS §9: Rotate refresh token — revoke old, issue new
+        rt.setRevokedAt(Instant.now());
+        refreshTokens.save(rt);
+
         String role = u.getRole() == null ? "USER" : u.getRole();
         String accessToken = jwt.generate(u.getUsername(), role, ACCESS_TOKEN_TTL_MS);
+        String newRefreshToken = issueRefreshToken(u.getId());
 
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("accessToken", accessToken);
+        response.put("refreshToken", newRefreshToken);
         response.put("token", accessToken);
         response.put("username", u.getUsername());
         response.put("role", role);

@@ -6,12 +6,14 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "inspection_plan", uniqueConstraints = {
     @UniqueConstraint(columnNames = {"plant_id", "item_code", "drawing_number", "drawing_revision", "operation", "inspection_type"})
 })
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class InspectionPlan {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;

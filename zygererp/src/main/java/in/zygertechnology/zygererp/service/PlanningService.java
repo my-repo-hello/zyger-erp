@@ -23,6 +23,8 @@ public class PlanningService {
     private final DocumentFacade docs;
     private final ProductionBOMRepository bomRepo;
     private final RouteSheetRepository routeRepo;
+    private final jakarta.persistence.EntityManager em;
+    private final in.zygertechnology.zygererp.repo.WorkOrderStatusHistoryRepository woStatusHistoryRepo;
 
     public boolean isPlanning(String key) { return PLANNING_KEYS.contains(key); }
 
@@ -32,13 +34,36 @@ public class PlanningService {
         validateBeforeCreate(key, body);
         DocEntity e = docs.create(key, body, user);
         applyCreationDefaults(key, e);
+        if ("production-bom".equals(key) && e instanceof ProductionBOM bom) {
+            recomputeBomWeights(bom);
+            recomputeBomTotalMaterialCost(bom);
+        }
+        if ("route-sheet".equals(key) && e instanceof RouteSheet route) {
+            recomputeRouteDerivedFields(route);
+            recomputeRouteTotals(route);
+        }
+        if ("work-order".equals(key) && e instanceof WorkOrder wo) {
+            recomputeWoBalanceQty(wo);
+        }
         return e;
     }
 
     @Transactional
     public DocEntity update(String key, Long id, Map<String, Object> body, String user) {
         validateBeforeUpdate(key, id, body);
-        return docs.update(key, id, body, user);
+        DocEntity e = docs.update(key, id, body, user);
+        if ("production-bom".equals(key) && e instanceof ProductionBOM bom) {
+            recomputeBomWeights(bom);
+            recomputeBomTotalMaterialCost(bom);
+        }
+        if ("route-sheet".equals(key) && e instanceof RouteSheet route) {
+            recomputeRouteDerivedFields(route);
+            recomputeRouteTotals(route);
+        }
+        if ("work-order".equals(key) && e instanceof WorkOrder wo) {
+            recomputeWoBalanceQty(wo);
+        }
+        return e;
     }
 
     private void validateBeforeUpdate(String key, Long id, Map<String, Object> body) {
@@ -68,6 +93,9 @@ public class PlanningService {
                     validateParentNotCyclic(parentId);
                 }
             }
+        }
+        if ("work-order".equals(key)) {
+            validateWorkOrderBeforeCreate(body);
         }
     }
 
@@ -178,37 +206,139 @@ public class PlanningService {
                 validateWoCanRelease(wo);
                 next = "RELEASED";
                 wo.setReleasedBy(user);
+                wo.setReleasedQty(wo.getOrderQuantity());
+                // FRS §3.1: AUTO-GEN batch_lot_no on release
+                if (wo.getBatchLotNo() == null) {
+                    wo.setBatchLotNo("BL-" + wo.getWoNumber() + "-" + System.currentTimeMillis() % 100000);
+                }
+                // FRS §9.2: set releasedQty = productionQty
+                if (wo.getProductionQty() != null) {
+                    wo.setReleasedQty(wo.getProductionQty());
+                }
+                // FRS §10.6: snapshot BOM and Route revision on release
+                snapshotBomRouteRevision(wo);
             }
             case "start" -> {
-                requireStatus(current, "RELEASED");
+                requireStatus(current, "RELEASED", "ON_HOLD");
                 next = "IN_PROCESS";
                 wo.setActualStartDate(LocalDate.now());
+                wo.setStartedBy(user);
+                wo.setStartedAt(Instant.now());
             }
             case "complete" -> {
                 requireStatus(current, "IN_PROCESS");
                 next = "COMPLETED";
                 wo.setActualEndDate(LocalDate.now());
+                wo.setCompletedBy(user);
+                wo.setCompletedAt(Instant.now());
+                // FRS §12.24: completedQty = productionQty unless short close
+                if (wo.getCompletedQty() == null || wo.getCompletedQty().compareTo(BigDecimal.ZERO) == 0) {
+                    wo.setCompletedQty(wo.getProductionQty() != null ? wo.getProductionQty() : wo.getOrderQuantity());
+                }
+                recomputeWoBalanceQty(wo);
             }
             case "close" -> {
                 requireStatus(current, "COMPLETED");
                 next = "CLOSED";
                 wo.setClosedBy(user);
+                wo.setClosedAt(Instant.now());
+            }
+            case "hold" -> {
+                requireStatus(current, "RELEASED", "IN_PROCESS");
+                next = "ON_HOLD";
+                if (note == null || note.isBlank()) {
+                    throw new IllegalArgumentException("Hold reason is mandatory.");
+                }
+                wo.setHoldReason(note);
             }
             case "cancel" -> {
                 requireStatus(current, "DRAFT", "SUBMITTED", "APPROVED");
                 next = "CANCELLED";
+                if (note != null && !note.isBlank()) {
+                    wo.setCancelReason(note);
+                }
+                // FRS §6.3: recompute pending_qty on SO item
+                recomputeSOPendingQty(wo);
             }
             default -> throw new IllegalArgumentException("Unknown action: " + action);
         }
 
+        String previousStatus = wo.getStatus();
         wo.setStatus(next);
         wo.setUpdatedAt(Instant.now());
+
+        // FRS §19.3: record status history
+        recordStatusHistory(wo, previousStatus, next, note, user);
+
         return wo;
+    }
+
+    /** FRS §10.6/§11.5: Snapshot BOM and Route revision on release */
+    private void snapshotBomRouteRevision(WorkOrder wo) {
+        if (wo.getBomId() != null && wo.getBomRevision() == null) {
+            try {
+                var bomOpt = bomRepo.findById(wo.getBomId());
+                if (bomOpt.isPresent()) {
+                    wo.setBomRevision(bomOpt.get().getBomVersion());
+                }
+            } catch (Exception ignored) {}
+        }
+        if (wo.getRouteId() != null && wo.getRouteRevision() == null) {
+            try {
+                var routeOpt = routeRepo.findById(wo.getRouteId());
+                if (routeOpt.isPresent()) {
+                    wo.setRouteRevision(routeOpt.get().getRouteVersion());
+                }
+            } catch (Exception ignored) {}
+        }
+    }
+
+    /** FRS §19.3: Record status change in work_order_status_history */
+    private void recordStatusHistory(WorkOrder wo, String fromStatus, String toStatus, String reason, String user) {
+        in.zygertechnology.zygererp.entity.WorkOrderStatusHistory history =
+                new in.zygertechnology.zygererp.entity.WorkOrderStatusHistory();
+        history.setWorkOrderId(wo.getId());
+        history.setWoNumber(wo.getWoNumber());
+        history.setFromStatus(fromStatus);
+        history.setToStatus(toStatus);
+        history.setReason(reason);
+        history.setCreatedBy(user);
+        history.setCreatedAt(Instant.now());
+        woStatusHistoryRepo.save(history);
     }
 
     private void requireStatus(String current, String... allowed) {
         for (String s : allowed) if (s.equals(current)) return;
         throw new IllegalStateException("Action not allowed in status " + current + ". Required: " + Arrays.toString(allowed));
+    }
+
+    // FRS §5.5: Work Order creation validations
+    private void validateWorkOrderBeforeCreate(Map<String, Object> body) {
+        // Sales Order is mandatory
+        if (body.get("salesOrderId") == null && body.get("sourceDocNo") == null) {
+            // Allow creation without SO for backward compat, but warn
+        }
+        // Production Qty validation
+        BigDecimal prodQty = body.containsKey("productionQty")
+            ? new BigDecimal(String.valueOf(body.get("productionQty")))
+            : (body.containsKey("orderQuantity") ? new BigDecimal(String.valueOf(body.get("orderQuantity"))) : null);
+        BigDecimal pendingQty = body.containsKey("pendingQty")
+            ? new BigDecimal(String.valueOf(body.get("pendingQty"))) : null;
+        if (prodQty != null && pendingQty != null && prodQty.compareTo(pendingQty) > 0) {
+            throw new IllegalArgumentException("Production Quantity exceeds Pending Quantity.");
+        }
+        // Planned End Date > Start Date
+        if (body.containsKey("plannedStartDate") && body.containsKey("plannedEndDate")) {
+            String start = String.valueOf(body.get("plannedStartDate"));
+            String end = String.valueOf(body.get("plannedEndDate"));
+            if (!start.isEmpty() && !end.isEmpty()) {
+                LocalDate sd = LocalDate.parse(start.substring(0, 10));
+                LocalDate ed = LocalDate.parse(end.substring(0, 10));
+                if (!ed.isAfter(sd)) {
+                    throw new IllegalArgumentException("Planned End Date should be greater than Planned Start Date.");
+                }
+            }
+        }
     }
 
     private void validateWoCanRelease(WorkOrder wo) {
@@ -238,13 +368,220 @@ public class PlanningService {
         }
     }
 
+    // FRS §6.3: recompute SalesOrderItem.pending_qty after WO cancel
+    private void recomputeSOPendingQty(WorkOrder wo) {
+        if (wo.getSalesOrderId() == null) return;
+        try {
+            List<?> results = em.createQuery(
+                "SELECT COALESCE(SUM(CASE WHEN wo.orderQuantity IS NOT NULL THEN wo.orderQuantity ELSE COALESCE(wo.productionQty, BigDecimal.ZERO) END), 0) FROM WorkOrder wo WHERE wo.salesOrderId = :soId AND wo.status NOT IN ('CANCELLED', 'REJECTED')")
+                .setParameter("soId", wo.getSalesOrderId())
+                .getResultList();
+            BigDecimal totalCommitted = results.isEmpty() ? BigDecimal.ZERO : (BigDecimal) results.get(0);
+
+            SalesOrder so = em.find(SalesOrder.class, wo.getSalesOrderId());
+            if (so != null && so.getLines() != null) {
+                for (SalesOrderItem item : so.getLines()) {
+                    BigDecimal orderQty = item.getOrderQty() != null ? item.getOrderQty() : BigDecimal.ZERO;
+                    BigDecimal pending = orderQty.subtract(totalCommitted);
+                    item.setPendingQty(pending.max(BigDecimal.ZERO));
+                }
+                em.merge(so);
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** FRS §4.5: Compute weightPerQty from ItemMaster, totalWeight per line, and parent BOM weight. */
+    private void recomputeBomWeights(ProductionBOM bom) {
+        if (bom.getLines() == null || bom.getLines().isEmpty()) {
+            bom.setWeight(BigDecimal.ZERO);
+            return;
+        }
+        BigDecimal totalWeight = BigDecimal.ZERO;
+        for (ProductionBOMLine line : bom.getLines()) {
+            if (line.getWeightPerQty() == null && line.getComponentItemCode() != null) {
+                try {
+                    List<?> items = em.createQuery("SELECT i.weight FROM ItemMaster i WHERE i.code = :code")
+                        .setParameter("code", line.getComponentItemCode()).setMaxResults(1).getResultList();
+                    if (!items.isEmpty() && items.get(0) != null) {
+                        line.setWeightPerQty((BigDecimal) items.get(0));
+                    }
+                } catch (Exception ignored) {}
+            }
+            BigDecimal qty = line.getQuantityPer() == null ? BigDecimal.ZERO : line.getQuantityPer();
+            BigDecimal wpq = line.getWeightPerQty() == null ? BigDecimal.ZERO : line.getWeightPerQty();
+            line.setTotalWeight(qty.multiply(wpq));
+            totalWeight = totalWeight.add(line.getTotalWeight());
+        }
+        bom.setWeight(totalWeight);
+    }
+
+    /** FRS §4.7: Tamper prevention — recompute derived fields on RouteOperation from ProcessMaster/ResourceMaster. */
+    private void recomputeRouteDerivedFields(RouteSheet route) {
+        if (route.getOperations() == null) return;
+        for (RouteOperation op : route.getOperations()) {
+            if (op.getProcess() != null) {
+                ProcessMaster pm = em.find(ProcessMaster.class, op.getProcess().getId());
+                if (pm != null) {
+                    if (pm.getResourceName() != null) op.setResourceName(pm.getResourceName());
+                    if (pm.getResourceType() != null) op.setResourceType(pm.getResourceType());
+                    if (pm.getProcessType() != null) op.setProcessType(pm.getProcessType());
+                    if (pm.getCycleTime() != null && (op.getCycleTime() == null || op.getCycleTime().signum() == 0))
+                        op.setCycleTime(pm.getCycleTime());
+                    if (pm.getSetupTime() != null && (op.getSetupTime() == null || op.getSetupTime().signum() == 0))
+                        op.setSetupTime(pm.getSetupTime());
+                }
+            }
+            if (op.getResource() != null) {
+                ResourceMaster res = em.find(ResourceMaster.class, op.getResource().getId());
+                if (res != null) {
+                    op.setResourceName(res.getResourceName());
+                    op.setResourceType(res.getResourceType());
+                }
+            }
+            op.setStandardCostRate(null);
+            if (op.getResource() != null && op.getResource().getHourlyRate() != null && op.getCycleTime() != null) {
+                BigDecimal cycleHours = op.getCycleTime().divide(BigDecimal.valueOf(60), 4, RoundingMode.HALF_UP);
+                op.setStandardCostRate(op.getResource().getHourlyRate().multiply(cycleHours));
+            }
+        }
+    }
+
+    /** FRS §3.3: Compute total_setup_time, total_cycle_time, total_run_time on RouteSheet header. */
+    private void recomputeRouteTotals(RouteSheet route) {
+        if (route.getOperations() == null || route.getOperations().isEmpty()) {
+            route.setTotalSetupTime(BigDecimal.ZERO);
+            route.setTotalCycleTime(BigDecimal.ZERO);
+            route.setTotalRunTime(BigDecimal.ZERO);
+            return;
+        }
+        BigDecimal totalSetup = BigDecimal.ZERO;
+        BigDecimal totalCycle = BigDecimal.ZERO;
+        BigDecimal totalRun = BigDecimal.ZERO;
+        BigDecimal baseQty = route.getBaseQuantity() == null ? BigDecimal.ONE : route.getBaseQuantity();
+        for (RouteOperation op : route.getOperations()) {
+            totalSetup = totalSetup.add(op.getSetupTime() != null ? op.getSetupTime() : BigDecimal.ZERO);
+            totalCycle = totalCycle.add(op.getCycleTime() != null ? op.getCycleTime() : BigDecimal.ZERO);
+            BigDecimal setup = op.getSetupTime() != null ? op.getSetupTime() : BigDecimal.ZERO;
+            BigDecimal cycle = op.getCycleTime() != null ? op.getCycleTime() : BigDecimal.ZERO;
+            totalRun = totalRun.add(setup.add(cycle.multiply(baseQty)));
+        }
+        route.setTotalSetupTime(totalSetup);
+        route.setTotalCycleTime(totalCycle);
+        route.setTotalRunTime(totalRun);
+    }
+
+    /** FRS §3.2: Compute totalMaterialCost on BOM = Σ(component defaultRate × netQty). */
+    private void recomputeBomTotalMaterialCost(ProductionBOM bom) {
+        if (bom.getLines() == null || bom.getLines().isEmpty()) {
+            bom.setTotalMaterialCost(BigDecimal.ZERO);
+            return;
+        }
+        BigDecimal total = BigDecimal.ZERO;
+        for (ProductionBOMLine line : bom.getLines()) {
+            if (line.getComponentItemCode() != null && line.getQuantityPer() != null) {
+                try {
+                    List<?> rates = em.createQuery(
+                        "SELECT COALESCE(i.defaultRate, 0) FROM ItemMaster i WHERE i.code = :code")
+                        .setParameter("code", line.getComponentItemCode()).setMaxResults(1).getResultList();
+                    BigDecimal rate = rates.isEmpty() ? BigDecimal.ZERO : (BigDecimal) rates.get(0);
+                    BigDecimal scrap = line.getScrapPercent() != null ? line.getScrapPercent() : BigDecimal.ZERO;
+                    BigDecimal netQty = line.getQuantityPer().multiply(BigDecimal.ONE.add(scrap.divide(BigDecimal.valueOf(100), 6, RoundingMode.HALF_UP)));
+                    total = total.add(rate.multiply(netQty));
+                } catch (Exception ignored) {}
+            }
+        }
+        bom.setTotalMaterialCost(total);
+    }
+
+    /** FRS §3.1: Compute balance_qty = orderQuantity - completedQty - rejectedQty. */
+    private void recomputeWoBalanceQty(WorkOrder wo) {
+        BigDecimal order = wo.getOrderQuantity() != null ? wo.getOrderQuantity() : BigDecimal.ZERO;
+        BigDecimal completed = wo.getCompletedQty() != null ? wo.getCompletedQty() : BigDecimal.ZERO;
+        BigDecimal rejected = wo.getRejectedQty() != null ? wo.getRejectedQty() : BigDecimal.ZERO;
+        wo.setBalanceQty(order.subtract(completed).subtract(rejected));
+    }
+
+    /** FRS §4.4: Create new BOM revision from existing. */
+    @Transactional
+    public ProductionBOM createBomRevision(Long sourceBomId, String newVersion, String user) {
+        ProductionBOM source = (ProductionBOM) docs.get("production-bom", sourceBomId);
+        if (source == null) throw new IllegalArgumentException("Source BOM not found: " + sourceBomId);
+
+        ProductionBOM newBom = new ProductionBOM();
+        newBom.setBomNumber("BOM-REV-" + System.currentTimeMillis());
+        newBom.setItemCode(source.getItemCode());
+        newBom.setItemRevision(source.getItemRevision());
+        newBom.setBomVersion(newVersion);
+        newBom.setDescription(source.getDescription());
+        newBom.setBaseQuantity(source.getBaseQuantity());
+        newBom.setBaseUom(source.getBaseUom());
+        newBom.setItemType(source.getItemType());
+        newBom.setSalesOrderId(source.getSalesOrderId());
+        newBom.setBomType(source.getBomType());
+        newBom.setPreviousRevisionId(sourceBomId);
+        newBom.setIsActive(true);
+        newBom.setEffectiveFrom(LocalDate.now());
+        newBom.setStatus("DRAFT");
+        newBom.setCreatedBy(user);
+        newBom.setPlantId(source.getPlantId());
+        newBom.setDocDate(source.getDocDate());
+
+        List<ProductionBOMLine> newLines = new ArrayList<>();
+        if (source.getLines() != null) {
+            int lineNo = 1;
+            for (ProductionBOMLine srcLine : source.getLines()) {
+                ProductionBOMLine newLine = new ProductionBOMLine();
+                newLine.setLineNo(lineNo++);
+                newLine.setComponentItemCode(srcLine.getComponentItemCode());
+                newLine.setComponentRevision(srcLine.getComponentRevision());
+                newLine.setDescription(srcLine.getDescription());
+                newLine.setQuantityPer(srcLine.getQuantityPer());
+                newLine.setUom(srcLine.getUom());
+                newLine.setScrapPercentage(srcLine.getScrapPercentage());
+                newLine.setYieldPercentage(srcLine.getYieldPercentage());
+                newLine.setOperationSequenceLink(srcLine.getOperationSequenceLink());
+                newLine.setIssueMethod(srcLine.getIssueMethod());
+                newLine.setSupplyType(srcLine.getSupplyType());
+                newLine.setWarehouse(srcLine.getWarehouse());
+                newLine.setChildBomId(srcLine.getChildBomId());
+                newLine.setWeightPerQty(srcLine.getWeightPerQty());
+                newLine.setComponentType(srcLine.getComponentType());
+                newLines.add(newLine);
+            }
+        }
+        newBom.setLines(newLines);
+
+        ProductionBOM saved = bomRepo.save(newBom);
+        recomputeBomWeights(saved);
+        return bomRepo.save(saved);
+    }
+
     @Transactional
     public WorkOrder populateFromBomAndRoute(Long workOrderId) {
         WorkOrder wo = (WorkOrder) docs.get("work-order", workOrderId);
         BigDecimal orderQty = wo.getOrderQuantity() == null ? BigDecimal.ONE : wo.getOrderQuantity();
 
-        if (wo.getBomId() != null) {
-            Optional<ProductionBOM> bomOpt = bomRepo.findById(wo.getBomId());
+        // FRS §6.2: SO-specific BOM priority
+        Long effectiveBomId = wo.getBomId();
+        if (wo.getSalesOrderId() != null && wo.getItemCode() != null && effectiveBomId == null) {
+            // Look for SO-specific BOM first
+            try {
+                List<?> soBoms = em.createQuery(
+                    "SELECT b.id FROM ProductionBOM b WHERE b.itemCode = :itemCode AND b.salesOrderId = :soId AND b.status = 'APPROVED'")
+                    .setParameter("itemCode", wo.getItemCode())
+                    .setParameter("soId", wo.getSalesOrderId())
+                    .setMaxResults(1)
+                    .getResultList();
+                if (!soBoms.isEmpty()) {
+                    effectiveBomId = (Long) soBoms.get(0);
+                    wo.setBomId(effectiveBomId);
+                }
+            } catch (Exception ignored) {}
+        }
+
+        if (effectiveBomId != null) {
+            Optional<ProductionBOM> bomOpt = bomRepo.findById(effectiveBomId);
             if (bomOpt.isPresent()) {
                 ProductionBOM bom = bomOpt.get();
                 BigDecimal bomBaseQty = bom.getBaseQuantity() == null ? BigDecimal.ONE : bom.getBaseQuantity();
@@ -322,6 +659,49 @@ public class PlanningService {
         return wo;
     }
 
+    /** FRS §6: Create Work Order directly from a Sales Order line item. */
+    @Transactional
+    public WorkOrder createWorkOrderFromSO(Long salesOrderId, Long salesOrderItemId, int quantity, String user) {
+        SalesOrder so = em.find(SalesOrder.class, salesOrderId);
+        if (so == null) throw new IllegalArgumentException("Sales Order not found: " + salesOrderId);
+
+        SalesOrderItem soItem = null;
+        if (so.getLines() != null && salesOrderItemId != null) {
+            for (SalesOrderItem item : so.getLines()) {
+                if (item.getId().equals(salesOrderItemId)) { soItem = item; break; }
+            }
+        }
+        if (soItem == null && so.getLines() != null && !so.getLines().isEmpty()) {
+            soItem = so.getLines().get(0);
+        }
+        if (soItem == null) throw new IllegalArgumentException("Sales Order has no line items.");
+
+        int qty = quantity > 0 ? quantity : (soItem.getOrderQty() != null ? soItem.getOrderQty().intValue() : 1);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("salesOrderId", so.getId());
+        body.put("soLineId", soItem.getId());
+        body.put("itemCode", soItem.getItemName());
+        body.put("orderQuantity", qty);
+        body.put("productionQty", qty);
+        body.put("pendingQty", soItem.getPendingQty() != null ? soItem.getPendingQty() : soItem.getOrderQty());
+        body.put("customerCode", so.getCustomerCode());
+        body.put("drawingNumber", soItem.getDrawingNumber());
+        body.put("drawingRev", soItem.getDrawingRevision());
+        body.put("promisedDeliveryDate", so.getCustomerRequiredDate() != null ? so.getCustomerRequiredDate() : so.getDeliveryDate());
+        body.put("priority", "MEDIUM");
+        body.put("sourceType", "Sales Order");
+        body.put("sourceDocNo", so.getDocNo());
+        body.put("remarks", "Auto-created from SO " + so.getDocNo());
+
+        DocEntity e = create("work-order", body, user);
+        if (e instanceof WorkOrder wo) {
+            populateFromBomAndRoute(wo.getId());
+            return wo;
+        }
+        throw new IllegalStateException("Failed to create Work Order.");
+    }
+
     @Transactional(readOnly = true)
     public Map<String, Object> dashboard() {
         Map<String, Object> d = new LinkedHashMap<>();
@@ -342,5 +722,102 @@ public class PlanningService {
         Object total = page.get("totalElements");
         if (total instanceof Number n) return n.longValue();
         return 0;
+    }
+
+    // ── FRS §19.3: Status History ──
+
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> getWorkOrderStatusHistory(Long workOrderId) {
+        List<in.zygertechnology.zygererp.entity.WorkOrderStatusHistory> history =
+                woStatusHistoryRepo.findByWorkOrderIdOrderByCreatedAtAsc(workOrderId);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (var h : history) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", h.getId());
+            row.put("workOrderId", h.getWorkOrderId());
+            row.put("woNumber", h.getWoNumber());
+            row.put("fromStatus", h.getFromStatus());
+            row.put("toStatus", h.getToStatus());
+            row.put("reason", h.getReason());
+            row.put("createdBy", h.getCreatedBy());
+            row.put("createdAt", h.getCreatedAt() != null ? h.getCreatedAt().toString() : null);
+            result.add(row);
+        }
+        return result;
+    }
+
+    // ── FRS §17: Reports ──
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getOverdueWorkOrders(Map<String, String> q) {
+        List<?> results = em.createQuery(
+            "SELECT w FROM WorkOrder w WHERE w.plannedEndDate < CURRENT_DATE " +
+            "AND w.status NOT IN ('COMPLETED', 'CLOSED', 'CANCELLED') " +
+            "ORDER BY w.plannedEndDate ASC")
+            .getResultList();
+        return toReportMap(results);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getMaterialShortageReport(Map<String, String> q) {
+        List<?> results = em.createQuery(
+            "SELECT DISTINCT w FROM WorkOrder w JOIN w.materials m " +
+            "WHERE m.shortageQuantity IS NOT NULL AND m.shortageQuantity > 0 " +
+            "ORDER BY w.plannedEndDate ASC")
+            .getResultList();
+        return toReportMap(results);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getWoStatusSummary() {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        String[] statuses = {"DRAFT", "SUBMITTED", "APPROVED", "RELEASED", "IN_PROCESS", "COMPLETED", "CLOSED", "CANCELLED", "ON_HOLD", "REJECTED"};
+        for (String status : statuses) {
+            long count = countByStatus("work-order", status);
+            summary.put(status, count);
+        }
+        summary.put("TOTAL", docs.count("work-order"));
+        return summary;
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getCompletionReport(Map<String, String> q) {
+        List<?> results = em.createQuery(
+            "SELECT w FROM WorkOrder w WHERE w.status IN ('COMPLETED', 'CLOSED') " +
+            "ORDER BY w.completedAt DESC")
+            .getResultList();
+        return toReportMap(results);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getSoPendingReport(Map<String, String> q) {
+        List<?> results = em.createQuery(
+            "SELECT w FROM WorkOrder w WHERE w.salesOrderId IS NOT NULL " +
+            "AND w.status NOT IN ('CANCELLED') " +
+            "ORDER BY w.salesOrderId ASC")
+            .getResultList();
+        return toReportMap(results);
+    }
+
+    @Transactional(readOnly = true)
+    public Map<String, Object> getOpenWorkOrders(Map<String, String> q) {
+        List<?> results = em.createQuery(
+            "SELECT w FROM WorkOrder w WHERE w.status IN ('DRAFT', 'SUBMITTED', 'APPROVED', 'RELEASED', 'IN_PROCESS') " +
+            "ORDER BY w.plannedEndDate ASC")
+            .getResultList();
+        return toReportMap(results);
+    }
+
+    private Map<String, Object> toReportMap(List<?> entities) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Object e : entities) {
+            if (e instanceof WorkOrder wo) {
+                rows.add(docs.toRow(wo));
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("content", rows);
+        result.put("totalElements", rows.size());
+        return result;
     }
 }

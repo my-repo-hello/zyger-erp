@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
 import StatusBadge from '../../../components/common/StatusBadge';
@@ -28,12 +29,14 @@ interface ProductionReturn {
 }
 
 const SC: Record<string, { color: string; bg: string }> = {
-  DRAFT: { color: '#888', bg: '#e9ecef' }, VERIFIED: { color: '#2563eb', bg: '#dbeafe' },
+  DRAFT: { color: '#888', bg: '#e9ecef' }, SUBMITTED: { color: '#6f42c1', bg: '#e8daef' },
+  VERIFIED: { color: '#2563eb', bg: '#dbeafe' },
   RECEIVED: { color: '#22c55e', bg: '#d4edda' }, CANCELLED: { color: '#991b1b', bg: '#fde2e2' },
 };
 
 export default function ProductionReturnScreen() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [rows, setRows] = useState<ProductionReturn[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<Record<string, unknown>>({});
@@ -43,6 +46,8 @@ export default function ProductionReturnScreen() {
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState<'list' | 'form'>('list');
   const [items, setItems] = useState<Array<{ code: string; name: string; uom?: string }>>([]);
+  const [entryOptions, setEntryOptions] = useState<Array<{ id: number; entryNumber: string; workOrderNumber: string; jobCardNumber: string; partCode: string; partDescription: string }>>([]);
+  const [entryLookup, setEntryLookup] = useState('');
 
   const fetchItems = useCallback(async () => {
     try {
@@ -51,7 +56,34 @@ export default function ProductionReturnScreen() {
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { if (tab === 'form') fetchItems(); }, [tab, fetchItems]);
+  useEffect(() => { if (tab === 'form' && !editId) fetchItems(); }, [tab, editId, fetchItems]);
+
+  const fetchEntries = useCallback(async () => {
+    try {
+      const { data } = await apiClient.get('/v1/production/entries', { params: { size: 50 } });
+      setEntryOptions(Array.isArray(data) ? data : data.content ?? []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { if (tab === 'form' && !editId) fetchEntries(); }, [tab, editId, fetchEntries]);
+
+  const handleEntrySelect = (entryNumber: string) => {
+    setEntryLookup(entryNumber);
+    const entry = entryOptions.find((e) => e.entryNumber === entryNumber);
+    if (entry) {
+      setForm((prev) => ({
+        ...prev,
+        workOrderNumber: entry.workOrderNumber || prev.workOrderNumber || '',
+        jobCardNumber: entry.jobCardNumber || prev.jobCardNumber || '',
+        itemCode: entry.partCode || prev.itemCode || '',
+        itemDescription: entry.partDescription || prev.itemDescription || '',
+        originalIssueReference: entry.entryNumber || prev.originalIssueReference || '',
+      }));
+      const item = items.find((i) => i.code === entry.partCode);
+      if (item?.uom) setForm((prev) => ({ ...prev, uom: item.uom }));
+      toast('Production entry details auto-filled.');
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -105,6 +137,22 @@ export default function ProductionReturnScreen() {
         <div className="panel">
           <div className="panel-h"><h2>{editId ? 'Edit' : 'New'} Return</h2></div>
           <div className="fgrid">
+            {!editId && entryOptions.length > 0 && (
+              <div style={{ gridColumn: '1 / -1', padding: '0 0 8px', background: '#f0f7ff', borderRadius: 8, marginBottom: 4, border: '1px solid #bfdbfe' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, padding: '8px 12px 0' }}>
+                  <span className="material-symbols-rounded" style={{ fontSize: 18, color: '#2563eb' }}>link</span>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: '#1e40af' }}>Quick Fill from Production Entry</span>
+                </div>
+                <div style={{ padding: '0 12px 8px' }}>
+                  <select className="in" value={entryLookup} onChange={(e) => handleEntrySelect(e.target.value)}>
+                    <option value="">Select Production Entry to auto-fill...</option>
+                    {entryOptions.map((e) => (
+                      <option key={e.entryNumber} value={e.entryNumber}>{e.entryNumber} | {e.partCode} | {e.partDescription || 'N/A'}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
             <label className="fld"><span>Return Date</span><input className="in" type="date" value={String(form.returnDate ?? '').slice(0, 10)} onChange={(e) => set('returnDate', e.target.value)} /></label>
             <label className="fld"><span>Work Order No</span><input className="in" value={String(form.workOrderNumber ?? '')} onChange={(e) => set('workOrderNumber', e.target.value)} /></label>
             <label className="fld"><span>Job Card No</span><input className="in" value={String(form.jobCardNumber ?? '')} onChange={(e) => set('jobCardNumber', e.target.value)} /></label>
@@ -132,7 +180,7 @@ export default function ProductionReturnScreen() {
           <div className="actbar">
             <span className="lft">{editId && <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }} disabled={busy}>Cancel</button>}</span>
             <button className="btn" onClick={() => { setForm({}); setEditId(null); setTab('list'); }}>Back</button>
-            <button className="btn btn-p" onClick={save} disabled={busy}>{editId ? 'Update' : 'Create'}</button>
+            <button className="btn btn-p" onClick={save} disabled={busy || !can('production', 'Edit')}>{editId ? 'Update' : 'Create'}</button>
           </div>
         </div>
       )}
@@ -149,7 +197,7 @@ export default function ProductionReturnScreen() {
               { key: 'condition', label: 'Condition' },
               { key: 'status', label: 'Status' },
             ], 'production-returns')}><span className="material-symbols-rounded">download</span></button>
-            <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Return</button>
+            <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }} disabled={!can('production', 'Edit')}>+ New Return</button>
           </div>
           <div className="twrap">
             {loading ? <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading...</div> : (
@@ -166,13 +214,13 @@ export default function ProductionReturnScreen() {
                       <td>{r.condition ?? '-'}</td>
                       <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>
-                        {r.status === 'DRAFT' && <button className="ibtn" title="Verify" onClick={() => action(r.id, 'verify')}><span className="material-symbols-rounded">fact_check</span></button>}
-                        {r.status === 'VERIFIED' && <button className="ibtn" title="Receive" onClick={() => action(r.id, 'receive')}><span className="material-symbols-rounded">inventory_2</span></button>}
-                        {r.status !== 'RECEIVED' && <button className="ibtn" title="Cancel" onClick={() => action(r.id, 'cancel')}><span className="material-symbols-rounded">block</span></button>}
-                        <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
+                        {r.status === 'DRAFT' && can('production', 'Approve') && <button className="ibtn" title="Verify" onClick={() => action(r.id, 'verify')}><span className="material-symbols-rounded">fact_check</span></button>}
+                        {r.status === 'VERIFIED' && can('production', 'Approve') && <button className="ibtn" title="Receive" onClick={() => action(r.id, 'receive')}><span className="material-symbols-rounded">inventory_2</span></button>}
+                        {r.status !== 'RECEIVED' && can('production', 'Cancel') && <button className="ibtn" title="Cancel" onClick={() => action(r.id, 'cancel')}><span className="material-symbols-rounded">block</span></button>}
+                        {can('production', 'Edit') && <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>}
                         <button className="ibtn" title="Print" onClick={() => printDocument(r.id, 'print')}><span className="material-symbols-rounded">print</span></button>
                         <button className="ibtn" title="Download PDF" onClick={() => printDocument(r.id, 'download')}><span className="material-symbols-rounded">download</span></button>
-                        {r.status === 'DRAFT' && <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(r)}><span className="material-symbols-rounded">delete</span></button>}
+                        {r.status === 'DRAFT' && can('production', 'Delete') && <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(r)}><span className="material-symbols-rounded">delete</span></button>}
                       </td>
                     </tr>
                   ))}

@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 import { TabsProvider } from './contexts/TabsContext';
@@ -9,6 +10,7 @@ import OfflineBadge from './components/common/OfflineBadge';
 import LoginPage from './pages/auth/LoginPage';
 import MainLayout from './components/layout/MainLayout';
 import axiosClient from './api/axiosClient';
+import { startBackgroundSync } from './utils/offlineQueue';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +32,11 @@ function ProtectedRoute() {
 }
 
 export default function App() {
+  useEffect(() => {
+    const stop = startBackgroundSync((url, opts) => axiosClient(url, opts as never) as unknown as Promise<Response>);
+    return () => stop?.();
+  }, []);
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -48,7 +55,7 @@ export default function App() {
                   }
                 />
               </Routes>
-              <OfflineBadge fetchFn={(url, opts) => axiosClient(url, opts) as unknown as Promise<Response>} />
+              <OfflineBadge fetchFn={(url, opts) => axiosClient(url, opts as never) as unknown as Promise<Response>} />
             </BrowserRouter>
           </AuthProvider>
         </ToastProvider>

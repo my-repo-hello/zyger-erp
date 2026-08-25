@@ -3,6 +3,8 @@ package in.zygertechnology.zygererp.entity;
 import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
+import java.time.LocalDate;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "material_plan")
@@ -11,6 +13,7 @@ import java.time.Instant;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class MaterialPlan {
 
     @Id
@@ -34,6 +37,18 @@ public class MaterialPlan {
 
     @Column(name = "parameters_json", columnDefinition = "TEXT")
     private String parametersJson;
+
+    /** FRS §3.4: planning horizon start */
+    @Column(name = "planning_horizon_start")
+    private LocalDate planningHorizonStart;
+
+    /** FRS §3.4: planning horizon end */
+    @Column(name = "planning_horizon_end")
+    private LocalDate planningHorizonEnd;
+
+    /** FRS §3.4: who/what triggered this run */
+    @Column(name = "triggered_by", length = 100)
+    private String triggeredBy;
 
     @Version
     private Long version;

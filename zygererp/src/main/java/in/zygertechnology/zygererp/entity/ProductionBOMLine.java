@@ -27,6 +27,12 @@ public class ProductionBOMLine extends BaseLine implements LineEntity {
     @Column(name = "substitute_priority") Integer substitutePriority;
     String warehouse;
     @Column(name = "child_bom_id") Long childBomId;
+    /** FRS §4.5: hierarchical level, e.g. "1", "1.1", "1.1.1" */
+    @Column(name = "bom_level", length = 20) String bomLevel;
+    /** FRS §4.5: weight per unit from Item Master */
+    @Column(name = "weight_per_qty", precision = 14, scale = 4) BigDecimal weightPerQty;
+    /** FRS §4.5: total weight = quantity × weight_per_qty */
+    @Column(name = "total_weight", precision = 14, scale = 4) BigDecimal totalWeight;
 
     @Column(name = "scrap_percent", precision = 5, scale = 2)
     BigDecimal scrapPercent = BigDecimal.ZERO;
@@ -34,6 +40,17 @@ public class ProductionBOMLine extends BaseLine implements LineEntity {
     String componentType = "RAW_MATERIAL";
     @Column(name = "is_phantom")
     Boolean isPhantom = false;
+    @Column(name = "is_active") Boolean isActive = true;
+
+    /** FRS §3.2: CNC material grade (e.g., SS304, Inconel 718) */
+    @Column(name = "material_grade", length = 100) String materialGrade;
+    /** FRS §3.2: form factor (e.g., Round Bar, Plate, Casting) */
+    @Column(name = "material_form", length = 60) String materialForm;
+    @Column(name = "diameter", precision = 14, scale = 4) BigDecimal diameter;
+    @Column(name = "required_length", precision = 14, scale = 4) BigDecimal requiredLength;
+    @Column(name = "required_qty", precision = 14, scale = 4) BigDecimal requiredQty;
+    @Column(name = "scrap_allowance", precision = 5, scale = 2) BigDecimal scrapAllowance;
+    @Column(name = "heat_lot_number", length = 60) String heatLotNumber;
 
     @Override public BigDecimal getQty() { return quantityPer == null ? BigDecimal.ZERO : quantityPer; }
 }

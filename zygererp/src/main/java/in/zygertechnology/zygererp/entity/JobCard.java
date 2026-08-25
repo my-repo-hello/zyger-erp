@@ -6,11 +6,13 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "job_card")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class JobCard {
 
     @Id
@@ -32,8 +34,22 @@ public class JobCard {
     @Column(name = "revision", length = 20)
     private String revision;
 
+    @Column(name = "plant_id") Long plantId;
+
     @Column(name = "planned_quantity", precision = 18, scale = 4)
     private BigDecimal plannedQuantity;
+
+    @Column(name = "completed_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal completedQtyComputed;
+
+    @Column(name = "rework_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal reworkQtyComputed;
+
+    @Column(name = "reject_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal rejectQtyComputed;
+
+    @Column(name = "scrap_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal scrapQtyComputed;
 
     @Column(name = "completed_quantity", precision = 18, scale = 4)
     private BigDecimal completedQuantity;

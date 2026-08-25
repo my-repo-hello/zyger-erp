@@ -4,11 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "gap_analysis_result")
 @Getter
 @Setter
+@EntityListeners(AuditEntityListener.class)
 public class GapAnalysisResult {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -41,6 +43,12 @@ public class GapAnalysisResult {
 
     @Column(name = "gap_days")
     Integer gapDays;
+    @Column(name = "demand_hours", precision = 14, scale = 2)
+    BigDecimal demandHours;
+    @Column(name = "supply_hours", precision = 14, scale = 2)
+    BigDecimal supplyHours;
+    @Column(name = "gap_hours", precision = 14, scale = 2)
+    BigDecimal gapHours;
 
     @Column(nullable = false, length = 20)
     String severity;
@@ -53,6 +61,12 @@ public class GapAnalysisResult {
 
     @Column(name = "action_status", length = 30)
     String actionStatus;
+    @Column(name = "gap_owner", length = 100)
+    String gapOwner;
+    @Column(name = "responsible_department", length = 100)
+    String responsibleDepartment;
+    @Column(name = "expected_resolution_date")
+    java.time.LocalDate expectedResolutionDate;
 
     @Column(name = "resolved_by", length = 100)
     String resolvedBy;

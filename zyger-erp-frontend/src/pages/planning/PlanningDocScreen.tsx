@@ -287,6 +287,10 @@ export default function PlanningDocScreen({ config, initialDocId, viewOnly = fal
             )}
           </div>
           <div className="fgrid">
+            <label className="fld">
+              <span>Doc No</span>
+              <input className="in" value={docNo} readOnly tabIndex={-1} style={{ fontWeight: 600, background: '#f9fafb' }} />
+            </label>
             {config.fields.map((field) => (
               <label key={field.key} className={`fld ${field.span2 ? 'span2' : ''}`}>
                 <span>{field.label}</span>

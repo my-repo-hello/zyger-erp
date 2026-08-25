@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import type { PermissionModule, PermissionAction } from '../../config/rbac';
 import { useTabs } from '../../contexts/TabsContext';
 import Navigation, { type NavigationNavigatePayload } from './Navigation';
 import { getScreenComponent } from '../../config/screenRegistry';
-import { NAV_ITEMS, type NavNode, type NavGroupNode, type NavTopItem } from '../../config/navigation';
+import { NAV_ITEMS, type NavNode, type NavTopItem } from '../../config/navigation';
 import DashboardPage from '../../pages/dashboard/DashboardPage';
 import apiClient from '../../api/axiosClient';
 
@@ -80,21 +81,6 @@ function flattenNav(nodes: unknown[], icon?: string): SearchResult[] {
 }
 
 function filterNavByPermission(nodes: NavNode[], hasModule: (mod: string) => boolean): NavNode[] {
-    const MODULE_MAP: Record<string, string> = {
-      'dashboard': 'master',
-      'master': 'master',
-      'crm': 'crm',
-      'sales': 'sales',
-      'purchase': 'purchase',
-      'inventory': 'inventory',
-      'planning': 'planning',
-      'production': 'production',
-      'quality': 'quality',
-      'maintenance': 'maintenance',
-      'admin': 'admin',
-      'reports-menu': 'reports',
-    };
-
   const result: NavNode[] = [];
   for (const node of nodes) {
     if (node.type === 'heading') {
@@ -115,7 +101,7 @@ function filterNavByPermission(nodes: NavNode[], hasModule: (mod: string) => boo
   return result;
 }
 
-function filterTopItems(items: NavTopItem[], hasModule: (mod: string) => boolean, can: (mod: string, action: string) => boolean): NavTopItem[] {
+function filterTopItems(items: NavTopItem[], hasModule: (mod: string) => boolean, _can: (mod: string, action: string) => boolean): NavTopItem[] {
   return items.filter((item) => {
     const modName = item.id === 'reports-menu' ? 'reports' : item.id;
     if (!hasModule(modName) && modName !== 'dashboard') return false;
@@ -126,7 +112,6 @@ function filterTopItems(items: NavTopItem[], hasModule: (mod: string) => boolean
     return filtered.length > 0;
   }).map((item) => {
     if (!item.children || item.children.length === 0) return item;
-    const modName = item.id === 'reports-menu' ? 'reports' : item.id;
     return { ...item, children: filterNavByPermission(item.children, hasModule) as NavNode[] };
   });
 }
@@ -156,6 +141,8 @@ export default function MainLayout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [companyLogo, setCompanyLogo] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string>('Zyger ERP');
 
   const notifRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -166,6 +153,17 @@ export default function MainLayout() {
   }, [theme]);
 
   const toggleTheme = () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+
+  useEffect(() => {
+    apiClient.get('/master/company-info').then(res => {
+      const d = res.data;
+      if (d?.companyLogoUrl) {
+        const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+        setCompanyLogo(baseUrl.replace(/\/$/, '') + '/master/company-info/logo/company');
+      }
+      if (d?.companyName) setCompanyName(d.companyName);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -200,22 +198,16 @@ export default function MainLayout() {
   }, []);
 
   const filteredNavItems = useMemo(
-    () => filterTopItems(NAV_ITEMS, hasModule, (m, a) => can(m as never, a as never)),
+    () => filterTopItems(NAV_ITEMS, (m: string) => hasModule(m as PermissionModule), (m, a) => can(m as PermissionModule, a as PermissionAction)),
     [hasModule, can]
   );
 
   const filteredScreens = useMemo(() => {
-    const modMap: Record<string, string> = {
-      'dashboard': 'master', 'master': 'master', 'crm': 'crm', 'sales': 'sales',
-      'purchase': 'purchase', 'inventory': 'inventory', 'planning': 'planning',
-      'production': 'production', 'quality': 'quality', 'maintenance': 'maintenance',
-      'admin': 'admin',
-    };
     const allScreens = flattenNav(NAV_ITEMS);
     return allScreens.filter((s) => {
       const parts = s.screenId.split('-');
       const mod = parts[0];
-      return hasModule(mod) || mod === 'reports';
+      return hasModule(mod as PermissionModule) || mod === 'reports';
     });
   }, [hasModule]);
 
@@ -392,11 +384,11 @@ export default function MainLayout() {
 
     try {
       if (can('quality', 'View')) {
-        const res = await apiClient.get('/quality/inspections');
+        const res = await apiClient.get('/v1/quality/inspections');
         const data = res.data as Record<string, unknown>;
         const list = (data.content ?? data) as unknown[];
         if (Array.isArray(list)) {
-          const pending = list.filter((i: Record<string, unknown>) => i.status === 'PENDING');
+          const pending = (list as Record<string, unknown>[]).filter((i) => i.status === 'PENDING');
           if (pending.length > 0) {
             items.push({
               id: 'quality-pending',
@@ -512,9 +504,15 @@ export default function MainLayout() {
 
       <header className="topbar">
         <div className="brand">
-          <div className="brand-logo">Z</div>
+          {companyLogo ? (
+            <div className="brand-logo" style={{ overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', boxShadow: 'none' }}>
+              <img src={companyLogo} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'contain', background: 'transparent' }} />
+            </div>
+          ) : (
+            <div className="brand-logo">Z</div>
+          )}
           <div className="brand-titles">
-            <b>Zyger ERP</b>
+            <b>{companyName}</b>
             <small>Precision Manufacturing ERP</small>
           </div>
         </div>

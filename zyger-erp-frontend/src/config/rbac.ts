@@ -15,7 +15,6 @@ export type RolePermissionMap = Record<RoleName, Set<PermissionKey>>;
 
 const ALL_ACTIONS: PermissionAction[] = ['View', 'Create', 'Edit', 'Delete', 'Approve', 'Reject', 'Cancel', 'Print', 'Export'];
 const CRUD: PermissionAction[] = ['View', 'Create', 'Edit', 'Delete'];
-const CRUD_P: PermissionAction[] = [...CRUD, 'Print'];
 const CRUD_PE: PermissionAction[] = [...CRUD, 'Print', 'Export'];
 const FULL: PermissionAction[] = [...ALL_ACTIONS];
 

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
+import { useAuth } from '../../../contexts/AuthContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
 import StatusBadge from '../../../components/common/StatusBadge';
@@ -12,6 +13,7 @@ interface ProductConversion {
   conversionNumber: string;
   conversionDate: string;
   conversionType: string;
+  conversionRate: number;
   sourceWarehouse: string;
   destinationWarehouse: string;
   workOrderNumber: string;
@@ -33,12 +35,15 @@ interface ProductConversion {
 }
 
 const SC: Record<string, { color: string; bg: string }> = {
-  DRAFT: { color: '#888', bg: '#e9ecef' }, COMPLETED: { color: '#22c55e', bg: '#d4edda' },
+  DRAFT: { color: '#888', bg: '#e9ecef' }, SUBMITTED: { color: '#6f42c1', bg: '#e8daef' },
+  VERIFIED: { color: '#2563eb', bg: '#dbeafe' }, POSTED: { color: '#22c55e', bg: '#d4edda' },
+  COMPLETED: { color: '#22c55e', bg: '#d4edda' },
   CANCELLED: { color: '#991b1b', bg: '#fde2e2' },
 };
 
 export default function ProductConversionScreen() {
   const { toast } = useToast();
+  const { can } = useAuth();
   const [rows, setRows] = useState<ProductConversion[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<Record<string, unknown>>({});
@@ -129,7 +134,7 @@ export default function ProductConversionScreen() {
               </select>
             </label>
             <label className="fld"><span>Input Batch No</span><input className="in" value={String(form.inputBatchNumber ?? '')} onChange={(e) => set('inputBatchNumber', e.target.value)} /></label>
-            <label className="fld"><span>Input Quantity</span><input className="in" type="number" value={String(form.inputQuantity ?? '')} onChange={(e) => set('inputQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Input Quantity</span><input className="in" type="number" value={String(form.inputQuantity ?? '')} onChange={(e) => { const iq = Number(e.target.value); set('inputQuantity', iq); const oq = Number(form.outputQuantity ?? 0); if (iq > 0 && oq > 0) set('conversionRate', oq / iq); }} /></label>
             <label className="fld"><span>Input UOM</span><input className="in" value={String(form.inputUom ?? '')} onChange={(e) => set('inputUom', e.target.value)} /></label>
             <hr style={{ gridColumn: '1 / -1', border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0' }} />
             <label className="fld"><span>Output Item Code *</span>
@@ -139,8 +144,9 @@ export default function ProductConversionScreen() {
               </select>
             </label>
             <label className="fld"><span>Output Batch No</span><input className="in" value={String(form.outputBatchNumber ?? '')} onChange={(e) => set('outputBatchNumber', e.target.value)} /></label>
-            <label className="fld"><span>Output Quantity</span><input className="in" type="number" value={String(form.outputQuantity ?? '')} onChange={(e) => set('outputQuantity', Number(e.target.value))} /></label>
+            <label className="fld"><span>Output Quantity</span><input className="in" type="number" value={String(form.outputQuantity ?? '')} onChange={(e) => { const oq = Number(e.target.value); set('outputQuantity', oq); const iq = Number(form.inputQuantity ?? 0); if (iq > 0 && oq > 0) set('conversionRate', oq / iq); }} /></label>
             <label className="fld"><span>Output UOM</span><input className="in" value={String(form.outputUom ?? '')} onChange={(e) => set('outputUom', e.target.value)} /></label>
+            <label className="fld"><span>Conversion Rate</span><input className="in" type="number" step="0.001" value={String(form.conversionRate ?? '')} onChange={(e) => set('conversionRate', Number(e.target.value))} readOnly /></label>
             <hr style={{ gridColumn: '1 / -1', border: 'none', borderTop: '1px solid var(--border)', margin: '4px 0' }} />
             <label className="fld"><span>Process Loss Qty</span><input className="in" type="number" value={String(form.processLossQty ?? '')} onChange={(e) => set('processLossQty', Number(e.target.value))} /></label>
             <label className="fld"><span>Scrap Qty</span><input className="in" type="number" value={String(form.scrapQty ?? '')} onChange={(e) => set('scrapQty', Number(e.target.value))} /></label>
@@ -166,10 +172,10 @@ export default function ProductConversionScreen() {
               { key: 'inputQuantity', label: 'Input Qty' },
               { key: 'outputItemCode', label: 'Output Item' },
               { key: 'outputQuantity', label: 'Output Qty' },
-              { key: 'conversionFactor', label: 'Factor' },
+              { key: 'conversionRate', label: 'Rate' },
               { key: 'status', label: 'Status' },
             ], 'product-conversion')}><span className="material-symbols-rounded">download</span></button>
-            <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }}>+ New Conversion</button>
+            <button className="btn btn-p" onClick={() => { setForm({}); setEditId(null); setTab('form'); }} disabled={!can('production', 'Edit')}>+ New Conversion</button>
           </div>
           <div className="twrap">
             {loading ? <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading...</div> : (
@@ -187,12 +193,12 @@ export default function ProductConversionScreen() {
                       <td>{r.processLossQty ?? 0}</td>
                       <td><StatusBadge status={r.status} variant={SC} /></td>
                       <td>
-                        {r.status === 'DRAFT' && <button className="ibtn" title="Complete" onClick={() => action(r.id, 'complete')}><span className="material-symbols-rounded">check_circle</span></button>}
-                        {r.status === 'DRAFT' && <button className="ibtn" title="Cancel" onClick={() => action(r.id, 'cancel')}><span className="material-symbols-rounded">block</span></button>}
-                        <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>
+                        {r.status === 'DRAFT' && can('production', 'Approve') && <button className="ibtn" title="Complete" onClick={() => action(r.id, 'complete')}><span className="material-symbols-rounded">check_circle</span></button>}
+                        {r.status === 'DRAFT' && can('production', 'Cancel') && <button className="ibtn" title="Cancel" onClick={() => action(r.id, 'cancel')}><span className="material-symbols-rounded">block</span></button>}
+                        {can('production', 'Edit') && <button className="ibtn" title="Edit" onClick={() => { setForm(r as unknown as Record<string, unknown>); setEditId(r.id); setTab('form'); }}><span className="material-symbols-rounded">edit</span></button>}
                         <button className="ibtn" title="Print" onClick={() => printDocument(r.id, 'print')}><span className="material-symbols-rounded">print</span></button>
                         <button className="ibtn" title="Download PDF" onClick={() => printDocument(r.id, 'download')}><span className="material-symbols-rounded">download</span></button>
-                        {r.status === 'DRAFT' && <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(r)}><span className="material-symbols-rounded">delete</span></button>}
+                        {r.status === 'DRAFT' && can('production', 'Delete') && <button className="ibtn danger" title="Delete" onClick={() => setDeleteTarget(r)}><span className="material-symbols-rounded">delete</span></button>}
                       </td>
                     </tr>
                   ))}

@@ -6,7 +6,6 @@ import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
 import AuditHistoryDrawer from '../../../components/common/AuditHistoryDrawer';
 import { exportToCsv } from '../../../utils/exportCsv';
-import type { RoleName } from '../../../config/rbac';
 
 interface AppUser {
   id: number; username: string; fullName?: string; email?: string;

@@ -189,14 +189,16 @@ export default function QualityList({ onAdd, onEdit, onView, defaultStatus = '',
                 COLUMNS.map((c) => ({
                   key: String(c.field),
                   label: c.label,
-                  render: (value: unknown, row: InspectionListRowDto) =>
-                    c.field === 'inspectionDate'
-                      ? formatDate(row.inspectionDate)
+                  render: (value: unknown, row: Record<string, unknown>) => {
+                    const r = row as unknown as InspectionListRowDto;
+                    return c.field === 'inspectionDate'
+                      ? formatDate(r.inspectionDate)
                       : c.field === 'inspectionType'
-                        ? TYPE_LABELS[row.inspectionType] ?? String(row.inspectionType ?? '')
+                        ? TYPE_LABELS[r.inspectionType] ?? String(r.inspectionType ?? '')
                         : c.field === 'itemCode'
-                          ? row.itemCode || ''
-                          : String(value ?? ''),
+                          ? r.itemCode || ''
+                          : String(value ?? '');
+                  },
                 })),
                 'quality-inspections'
               )

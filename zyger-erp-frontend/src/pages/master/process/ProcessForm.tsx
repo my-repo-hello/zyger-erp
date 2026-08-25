@@ -4,6 +4,10 @@ import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import { defaultForm } from './processTypes';
 
+interface Resource { id: number; resourceName: string; resourceCode: string; resourceType: string; }
+
+const PROCESS_TYPES = ['', 'MACHINING', 'ASSEMBLY', 'SURFACE_TREATMENT', 'HEAT_TREATMENT', 'INSPECTION', 'PACKING', 'SUBCONTRACTING', 'OTHER'];
+
 interface Props {
   processId: number | null;
   viewOnly?: boolean;
@@ -17,6 +21,7 @@ export default function ProcessForm({ processId, viewOnly = false, onBack, onSav
   const [editId, setEditId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resources, setResources] = useState<Resource[]>([]);
 
   const fetchNextCode = async () => {
     try {
@@ -26,6 +31,7 @@ export default function ProcessForm({ processId, viewOnly = false, onBack, onSav
   };
 
   useEffect(() => {
+    apiClient.get('/master/resources').then(r => setResources(Array.isArray(r.data) ? r.data : [])).catch(() => {});
     if (!processId) {
       setForm(defaultForm());
       setEditId(null);
@@ -50,6 +56,18 @@ export default function ProcessForm({ processId, viewOnly = false, onBack, onSav
   }, [processId]);
 
   const updateForm = (key: string, value: unknown) => setForm((c) => ({ ...c, [key]: value }));
+
+  const onResourceChange = (resourceId: string) => {
+    const id = resourceId ? Number(resourceId) : null;
+    if (id) {
+      const res = resources.find((r) => r.id === id);
+      if (res) {
+        setForm((c) => ({ ...c, requiredResource: id, resourceName: res.resourceName, resourceType: res.resourceType }));
+        return;
+      }
+    }
+    setForm((c) => ({ ...c, requiredResource: null, resourceName: '', resourceType: '' }));
+  };
 
   const save = async () => {
     if (!String(form.code ?? '').trim()) { toast('Process Code is required.', 'error'); return; }
@@ -103,6 +121,30 @@ export default function ProcessForm({ processId, viewOnly = false, onBack, onSav
               <span>Process Name *</span>
               <input className="in" value={String(form.name ?? '')}
                 onChange={(e) => updateForm('name', e.target.value)} disabled={viewOnly} />
+            </label>
+            <label className="fld">
+              <span>Process Type</span>
+              <select className="in" value={String(form.processType ?? '')}
+                onChange={(e) => updateForm('processType', e.target.value)} disabled={viewOnly}>
+                <option value="">— Select —</option>
+                {PROCESS_TYPES.filter(Boolean).map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
+              </select>
+            </label>
+            <label className="fld">
+              <span>Required Resource</span>
+              <select className="in" value={String(form.requiredResource ?? '')}
+                onChange={(e) => onResourceChange(e.target.value)} disabled={viewOnly}>
+                <option value="">— None —</option>
+                {resources.map((r) => <option key={r.id} value={r.id}>{r.resourceCode} — {r.resourceName} ({r.resourceType})</option>)}
+              </select>
+            </label>
+            <label className="fld">
+              <span>Resource Name</span>
+              <input className="in" value={String(form.resourceName ?? '')} disabled />
+            </label>
+            <label className="fld">
+              <span>Resource Type</span>
+              <input className="in" value={String(form.resourceType ?? '')} disabled />
             </label>
             <label className="fld">
               <span>Description</span>

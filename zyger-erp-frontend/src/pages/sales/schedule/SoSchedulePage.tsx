@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import axiosClient from '../../../api/axiosClient';
 import StatusBadge from '../../../components/common/StatusBadge';
-import { useTabs } from '../../../contexts/TabsContext';
-import { exportToCsv } from '../../../utils/csvExport';
+import { exportSimpleCsv } from '../../../utils/csvExport';
 
 interface SoScheduleRow {
   id: number;
@@ -23,8 +22,7 @@ interface SoScheduleRow {
 }
 
 export default function SoSchedulePage() {
-  const { openTab } = useTabs();
-  const { user } = useAuth();
+  useAuth();
 
   const [schedules, setSchedules] = useState<SoScheduleRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,7 +97,7 @@ export default function SoSchedulePage() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <button className="btn btn-sm" onClick={() => exportToCsv(filtered.map(s => ({
+          <button className="btn btn-sm" onClick={() => exportSimpleCsv(filtered.map(s => ({
             'SO No': s.soNo, 'Customer': s.customer, 'Item Code': s.itemCode,
             'Description': s.itemDescription, 'UOM': s.uom, 'Ordered Qty': s.orderedQty,
             'Dispatched Qty': s.dispatchedQty, 'Pending Qty': s.pendingQty,

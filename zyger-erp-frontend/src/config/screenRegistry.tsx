@@ -78,6 +78,7 @@ import SpcPage from '../pages/quality/SpcPage';
 import BomPage from '../pages/planning/bom/BomPage';
 import RouteSheetPage from '../pages/planning/route/RouteSheetPage';
 import WorkOrderPage from '../pages/planning/workorder/WorkOrderPage';
+import WorkOrderReportsScreen from '../pages/planning/workorder/WorkOrderReportsScreen';
 import ShopFloorPage from '../pages/planning/shopfloor/ShopFloorPage';
 import WorkCenterPage from '../pages/planning/master/WorkCenterPage';
 import OperationPage from '../pages/planning/master/OperationPage';
@@ -87,11 +88,15 @@ import ItemMasterScreen from '../pages/master/ItemMasterScreen';
 import MaterialPlanningScreen from '../pages/planning/material-planning/MaterialPlanningScreen';
 import DispatchPlanScreen from '../pages/planning/dispatch-plan/DispatchPlanScreen';
 import MachineLoadScreen from '../pages/planning/machine-load/MachineLoadScreen';
+import MachineLoadGantt from '../pages/planning/machine-load/MachineLoadGantt';
+import ResourceMasterScreen from '../pages/master/resource/ResourceMasterScreen';
+import BomMasterScreen from '../pages/master/bom/BomMasterScreen';
 import EcrScreen from '../pages/planning/ecr/EcrScreen';
 import GapAnalysisScreen from '../pages/planning/gap-analysis/GapAnalysisScreen';
 import CostEstimationScreen from '../pages/planning/cost-estimation/CostEstimationScreen';
 import FgPossibleScreen from '../pages/planning/fg-possible/FgPossibleScreen';
 import JobCardScreen from '../pages/production/job-card/JobCardScreen';
+import JobCardKanban from '../pages/production/kanban/JobCardKanban';
 import ProductionEntryScreen from '../pages/production/production-entry/ProductionEntryScreen';
 import ProductConversionScreen from '../pages/production/product-conversion/ProductConversionScreen';
 import ProductionReturnScreen from '../pages/production/production-return/ProductionReturnScreen';
@@ -225,6 +230,7 @@ export const SCREEN_REGISTRY: Record<string, ScreenDefinition> = {
   'production-bom': { component: BomPage },
   'route-sheet': { component: RouteSheetPage },
   'work-order': { component: WorkOrderPage },
+  'work-order-reports': { component: WorkOrderReportsScreen },
   'shop-floor-entry': { component: ShopFloorPage },
   'work-center': { component: WorkCenterPage },
   'machine-master': { component: MachineScreen },
@@ -235,11 +241,15 @@ export const SCREEN_REGISTRY: Record<string, ScreenDefinition> = {
   'material-planning': { component: MaterialPlanningScreen },
   'dispatch-plan': { component: DispatchPlanScreen },
   'machine-load': { component: MachineLoadScreen },
+  'machine-load-gantt': { component: MachineLoadGantt },
+  'resource-master': { component: ResourceMasterScreen },
+  'bom-master': { component: BomMasterScreen },
   'engineering-change': { component: EcrScreen },
   'gap-analysis': { component: GapAnalysisScreen },
   'cost-estimation': { component: CostEstimationScreen },
   'fg-possible': { component: FgPossibleScreen },
   'job-card': { component: JobCardScreen },
+  'job-card-kanban': { component: JobCardKanban },
   'production-entry': { component: ProductionEntryScreen },
   'product-conversion': { component: ProductConversionScreen },
   'production-return': { component: ProductionReturnScreen },

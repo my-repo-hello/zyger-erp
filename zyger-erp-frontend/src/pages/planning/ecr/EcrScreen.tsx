@@ -7,6 +7,8 @@ import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
 
 interface Ecr {
   id: number;
+  ecrNumber: string;
+  ecoNumber?: string;
   changeType: string;
   itemCode: string;
   itemDescription: string;
@@ -17,6 +19,26 @@ interface Ecr {
   priority: string;
   status: string;
   effectiveDate?: string;
+  bomImpact?: boolean;
+  routeImpact?: boolean;
+  qualityImpact?: boolean;
+  inventoryImpact?: boolean;
+  implementationPlan?: string;
+  cutInWoNo?: string;
+  oldStockDisposition?: string;
+  costImpactEstimate?: number;
+  verifiedBy?: string;
+  verifiedDate?: string;
+  closedDate?: string;
+  bomRevFrom?: string;
+  bomRevTo?: string;
+  routeRevFrom?: string;
+  routeRevTo?: string;
+  drawingRevFrom?: string;
+  drawingRevTo?: string;
+  requestedBy?: string;
+  reviewedBy?: string;
+  approvedBy?: string;
   remarks?: string;
 }
 
@@ -210,6 +232,93 @@ export default function EcrScreen() {
             <span>Reason for Change *</span>
             <textarea className="in" rows={2} value={String(form.reasonForChange ?? '')} onChange={(e) => set('reasonForChange', e.target.value)} />
           </label>
+          {/* Impact checkboxes */}
+          <label className="fld">
+            <span>BOM Impact</span>
+            <select className="in" value={String(form.bomImpact ?? '')} onChange={(e) => set('bomImpact', e.target.value === 'true')}>
+              <option value="">No</option><option value="true">Yes</option>
+            </select>
+          </label>
+          <label className="fld">
+            <span>Route Impact</span>
+            <select className="in" value={String(form.routeImpact ?? '')} onChange={(e) => set('routeImpact', e.target.value === 'true')}>
+              <option value="">No</option><option value="true">Yes</option>
+            </select>
+          </label>
+          <label className="fld">
+            <span>Quality Impact</span>
+            <select className="in" value={String(form.qualityImpact ?? '')} onChange={(e) => set('qualityImpact', e.target.value === 'true')}>
+              <option value="">No</option><option value="true">Yes</option>
+            </select>
+          </label>
+          <label className="fld">
+            <span>Inventory Impact</span>
+            <select className="in" value={String(form.inventoryImpact ?? '')} onChange={(e) => set('inventoryImpact', e.target.value === 'true')}>
+              <option value="">No</option><option value="true">Yes</option>
+            </select>
+          </label>
+          <label className="fld">
+            <span>BOM Rev From</span>
+            <input className="in" value={String(form.bomRevFrom ?? '')} onChange={(e) => set('bomRevFrom', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>BOM Rev To</span>
+            <input className="in" value={String(form.bomRevTo ?? '')} onChange={(e) => set('bomRevTo', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Route Rev From</span>
+            <input className="in" value={String(form.routeRevFrom ?? '')} onChange={(e) => set('routeRevFrom', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Route Rev To</span>
+            <input className="in" value={String(form.routeRevTo ?? '')} onChange={(e) => set('routeRevTo', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Drawing Rev From</span>
+            <input className="in" value={String(form.drawingRevFrom ?? '')} onChange={(e) => set('drawingRevFrom', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Drawing Rev To</span>
+            <input className="in" value={String(form.drawingRevTo ?? '')} onChange={(e) => set('drawingRevTo', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Implementation Plan</span>
+            <textarea className="in" rows={2} value={String(form.implementationPlan ?? '')} onChange={(e) => set('implementationPlan', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Cut-In WO No</span>
+            <input className="in" value={String(form.cutInWoNo ?? '')} onChange={(e) => set('cutInWoNo', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Old Stock Disposition</span>
+            <select className="in" value={String(form.oldStockDisposition ?? '')} onChange={(e) => set('oldStockDisposition', e.target.value)}>
+              <option value="">Select...</option>
+              <option value="USE_AS_IS">Use-As-Is</option>
+              <option value="REWORK">Rework</option>
+              <option value="SCRAP">Scrap</option>
+              <option value="RETURN_TO_VENDOR">Return to Vendor</option>
+            </select>
+          </label>
+          <label className="fld">
+            <span>Cost Impact Estimate</span>
+            <input className="in" type="number" step="0.01" value={String(form.costImpactEstimate ?? '')} onChange={(e) => set('costImpactEstimate', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
+            <span>Requested By</span>
+            <input className="in" value={String(form.requestedBy ?? '')} onChange={(e) => set('requestedBy', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Reviewed By</span>
+            <input className="in" value={String(form.reviewedBy ?? '')} onChange={(e) => set('reviewedBy', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Approved By</span>
+            <input className="in" value={String(form.approvedBy ?? '')} onChange={(e) => set('approvedBy', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Verified By</span>
+            <input className="in" value={String(form.verifiedBy ?? '')} onChange={(e) => set('verifiedBy', e.target.value)} />
+          </label>
           <label className="fld">
             <span>Remarks</span>
             <textarea className="in" rows={2} value={String(form.remarks ?? '')} onChange={(e) => set('remarks', e.target.value)} />
@@ -225,7 +334,10 @@ export default function EcrScreen() {
 
       <div className="panel">
         <div className="toolbar">
-          <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="searchwrap">
+            <span className="material-symbols-rounded">search</span>
+            <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
           <span className="count">{total} ECRs</span>
         </div>
         <div className="twrap">

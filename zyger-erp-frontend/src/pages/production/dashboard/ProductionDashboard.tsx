@@ -108,7 +108,7 @@ export default function ProductionDashboard() {
                     { name: 'On Hold', value: data.onHoldJobCards, fill: '#d97706' },
                     { name: 'Completed', value: data.completedJobCards, fill: '#059669' },
                     { name: 'Closed', value: data.closedJobCards, fill: '#6b7280' },
-                  ].filter((d) => d.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                  ].filter((d) => d.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}>
                     {[
                       { fill: '#9ca3af' }, { fill: '#16a34a' }, { fill: '#2563eb' },
                       { fill: '#d97706' }, { fill: '#059669' }, { fill: '#6b7280' },

@@ -106,6 +106,14 @@ export const NAV_ITEMS: NavTopItem[] = [
         tabIcon: 'engineering',
       },
       {
+        type: 'item',
+        id: 'master-bom',
+        label: 'Bill of Material (BOM)',
+        icon: 'account_tree',
+        screenId: 'bom-master',
+        tabIcon: 'account_tree',
+      },
+      {
         type: 'group',
         id: 'master-assets',
         label: 'Assets',
@@ -116,6 +124,14 @@ export const NAV_ITEMS: NavTopItem[] = [
           { type: 'item', id: 'instrument-master', label: 'Instrument Master', icon: 'science', screenId: 'instrument-master', tabIcon: 'science' },
           { type: 'item', id: 'tool-master', label: 'Tools Master', icon: 'build', screenId: 'tool-master', tabIcon: 'build' },
         ],
+      },
+      {
+        type: 'item',
+        id: 'admin-user-management',
+        label: 'User Management',
+        icon: 'manage_accounts',
+        screenId: 'user-management',
+        tabIcon: 'manage_accounts',
       },
       {
         type: 'item',
@@ -148,24 +164,9 @@ export const NAV_ITEMS: NavTopItem[] = [
           { type: 'item', id: 'inspection-plan', label: 'Inspection Plans', icon: 'checklist', screenId: 'inspection-plan', tabIcon: 'checklist' },
           { type: 'item', id: 'oee', label: 'OEE Dashboard', icon: 'monitoring', screenId: 'oee', tabIcon: 'monitoring' },
           { type: 'item', id: 'supplier-scorecard', label: 'Supplier Scorecard', icon: 'grade', screenId: 'supplier-scorecard', tabIcon: 'grade' },
+          { type: 'item', id: 'resource-master', label: 'Resource Master', icon: 'precision_manufacturing', screenId: 'resource-master', tabIcon: 'precision_manufacturing' },
           { type: 'item', id: 'machine-costs', label: 'Machine Costs (TCO)', icon: 'payments', screenId: 'machine-costs', tabIcon: 'payments' },
         ],
-      },
-    ],
-  },
-
-  {
-    id: 'admin',
-    label: 'Administration',
-    icon: 'admin_panel_settings',
-    children: [
-      {
-        type: 'item',
-        id: 'admin-user-management',
-        label: 'User Management',
-        icon: 'manage_accounts',
-        screenId: 'user-management',
-        tabIcon: 'manage_accounts',
       },
     ],
   },
@@ -661,6 +662,13 @@ export const NAV_ITEMS: NavTopItem[] = [
       },
       {
         type: 'item',
+        id: 'machine-load-gantt',
+        label: 'Machine Load Gantt',
+        icon: 'view_timeline',
+        screenId: 'machine-load-gantt',
+      },
+      {
+        type: 'item',
         id: 'engineering-change',
         label: 'Request (ECR)',
         icon: 'change_circle',
@@ -702,6 +710,13 @@ export const NAV_ITEMS: NavTopItem[] = [
         label: 'Job Card',
         icon: 'assignment',
         screenId: 'job-card',
+      },
+      {
+        type: 'item',
+        id: 'job-card-kanban',
+        label: 'Job Card Kanban',
+        icon: 'view_kanban',
+        screenId: 'job-card-kanban',
       },
       {
         type: 'item',
@@ -1202,6 +1217,13 @@ export const NAV_ITEMS: NavTopItem[] = [
         label: 'Inventory Reports',
         icon: 'inventory',
         screenId: 'reports',
+      },
+      {
+        type: 'item',
+        id: 'work-order-reports',
+        label: 'Work Order Reports',
+        icon: 'assignment',
+        screenId: 'work-order-reports',
       },
     ],
   },

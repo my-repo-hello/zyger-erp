@@ -32,6 +32,10 @@ public class SalesOrder extends BaseDoc implements DocEntity {
     @Column(name="customer_required_date") LocalDate customerRequiredDate;
     @Column(name="internal_target_date") LocalDate internalTargetDate;
     @Column(name="shipping_method", length=100) String shippingMethod;
+    /** FRS §4.8: Open or Fixed */
+    @Column(name="so_type", length=30) String soType;
+    /** FRS §4.8: generic terms and conditions */
+    @Column(name="terms_and_conditions", columnDefinition="TEXT") String termsAndConditions;
 
     @Column(name="ordered_qty") BigDecimal orderedQty;
     @Column(name="produced_qty") BigDecimal producedQty;

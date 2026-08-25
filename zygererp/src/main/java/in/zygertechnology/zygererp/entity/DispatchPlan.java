@@ -4,11 +4,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "dispatch_plan")
 @Getter
 @Setter
+@EntityListeners(AuditEntityListener.class)
 public class DispatchPlan {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -43,6 +45,10 @@ public class DispatchPlan {
 
     @Column(name = "eway_bill_number", length = 50)
     String ewayBillNumber;
+    @Column(name = "delivery_address_id")
+    Long deliveryAddressId;
+    @Column(name = "customer_po_number", length = 60)
+    String customerPoNumber;
 
     String status;
 

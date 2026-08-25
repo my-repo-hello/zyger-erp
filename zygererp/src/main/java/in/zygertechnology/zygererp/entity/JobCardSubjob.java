@@ -5,11 +5,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "job_card_subjob")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class JobCardSubjob {
 
     @Id
@@ -44,6 +46,22 @@ public class JobCardSubjob {
 
     @Column(name = "planned_quantity", precision = 18, scale = 4)
     private BigDecimal plannedQuantity;
+
+    @Column(name = "plant_id") Long plantId;
+
+    @Column(name = "route_detail_id") Long routeDetailId;
+
+    @Column(name = "completed_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal completedQtyComputed;
+
+    @Column(name = "rework_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal reworkQtyComputed;
+
+    @Column(name = "reject_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal rejectQtyComputed;
+
+    @Column(name = "scrap_qty_computed", precision = 18, scale = 4, insertable = false, updatable = false)
+    private BigDecimal scrapQtyComputed;
 
     @Column(name = "completed_quantity", precision = 18, scale = 4)
     private BigDecimal completedQuantity;

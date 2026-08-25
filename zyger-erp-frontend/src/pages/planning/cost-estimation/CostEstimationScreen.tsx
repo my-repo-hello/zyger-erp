@@ -4,20 +4,54 @@ import { useToast } from '../../../contexts/ToastContext';
 import { getApiErrorMessage } from '../../../utils/apiError';
 import ConfirmActionModal from '../../../components/common/ConfirmActionModal';
 
+interface ReconcileResult {
+  estimationNumber: string;
+  itemCode: string;
+  workOrders: string[];
+  estimated: { material: number; machine: number; total: number };
+  actual: { machine: number; total: number };
+  variance: { machine: number; total: number };
+  variancePercent?: { machine: number; total: number };
+}
+
 interface CostEstimation {
   id: number;
+  estimationNumber?: string;
   itemCode: string;
   itemDescription?: string;
   customerName?: string;
+  customerId?: number;
+  soId?: number;
+  soNumber?: string;
   batchQty?: number;
+  bomId?: number;
+  routeId?: number;
+  estimationVersion?: number;
   currencyCode?: string;
+  exchangeRate?: number;
   profitMarginPercent?: number;
+  profitAmount?: number;
+  validUpto?: string;
+  preparedBy?: string;
+  approvedBy?: string;
   status: string;
   remarks?: string;
   totalMaterialCost?: number;
   totalMachineCost?: number;
+  totalLabourCost?: number;
+  totalToolingCost?: number;
+  totalSubcontractCost?: number;
+  totalOverheadCost?: number;
+  scrapAllowanceCost?: number;
   totalManufacturingCost?: number;
   estimatedSellingPrice?: number;
+  actualMaterialCost?: number;
+  actualMachineCost?: number;
+  actualLabourCost?: number;
+  actualTotalCost?: number;
+  varianceMaterial?: number;
+  varianceMachine?: number;
+  varianceTotal?: number;
 }
 
 interface CostLine {
@@ -62,6 +96,9 @@ export default function CostEstimationScreen() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [lines, setLines] = useState<CostLine[]>([]);
   const [linesLoading, setLinesLoading] = useState(false);
+  const [reconcileTarget, setReconcileTarget] = useState<number | null>(null);
+  const [reconcileResult, setReconcileResult] = useState<ReconcileResult | null>(null);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -122,6 +159,23 @@ export default function CostEstimationScreen() {
     setBusy(false);
   };
 
+  const reconcile = async (est: CostEstimation) => {
+    setReconcileTarget(est.id);
+    setReconcileLoading(true);
+    setReconcileResult(null);
+    try {
+      const { data } = await apiClient.post(`/v1/planning/cost-estimations/${est.id}/reconcile`);
+      setReconcileResult(data);
+      toast('Reconciliation complete.');
+      load();
+    } catch (e) {
+      toast(getApiErrorMessage(e, 'Reconciliation failed.'), 'error');
+    }
+    setReconcileLoading(false);
+  };
+
+  const reconcileClose = () => { setReconcileTarget(null); setReconcileResult(null); };
+
   const performAction = async () => {
     if (!actionTarget) return;
     setBusy(true);
@@ -176,16 +230,56 @@ export default function CostEstimationScreen() {
             <input className="in" value={String(form.customerName ?? '')} onChange={(e) => set('customerName', e.target.value)} />
           </label>
           <label className="fld">
+            <span>Customer ID</span>
+            <input className="in" type="number" value={String(form.customerId ?? '')} onChange={(e) => set('customerId', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
+            <span>SO Number</span>
+            <input className="in" value={String(form.soNumber ?? '')} onChange={(e) => set('soNumber', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>SO ID</span>
+            <input className="in" type="number" value={String(form.soId ?? '')} onChange={(e) => set('soId', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
             <span>Batch Qty</span>
             <input className="in" type="number" step="1" value={String(form.batchQty ?? '')} onChange={(e) => set('batchQty', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
+            <span>BOM ID</span>
+            <input className="in" type="number" value={String(form.bomId ?? '')} onChange={(e) => set('bomId', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
+            <span>Route ID</span>
+            <input className="in" type="number" value={String(form.routeId ?? '')} onChange={(e) => set('routeId', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
+            <span>Est Version</span>
+            <input className="in" type="number" value={String(form.estimationVersion ?? '')} onChange={(e) => set('estimationVersion', e.target.value ? Number(e.target.value) : null)} />
           </label>
           <label className="fld">
             <span>Currency Code</span>
             <input className="in" value={String(form.currencyCode ?? '')} onChange={(e) => set('currencyCode', e.target.value)} />
           </label>
           <label className="fld">
+            <span>Exchange Rate</span>
+            <input className="in" type="number" step="0.0001" value={String(form.exchangeRate ?? '')} onChange={(e) => set('exchangeRate', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
             <span>Profit Margin %</span>
             <input className="in" type="number" step="0.01" value={String(form.profitMarginPercent ?? '')} onChange={(e) => set('profitMarginPercent', e.target.value ? Number(e.target.value) : null)} />
+          </label>
+          <label className="fld">
+            <span>Valid Upto</span>
+            <input className="in" type="date" value={String(form.validUpto ?? '')} onChange={(e) => set('validUpto', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Prepared By</span>
+            <input className="in" value={String(form.preparedBy ?? '')} onChange={(e) => set('preparedBy', e.target.value)} />
+          </label>
+          <label className="fld">
+            <span>Approved By</span>
+            <input className="in" value={String(form.approvedBy ?? '')} onChange={(e) => set('approvedBy', e.target.value)} />
           </label>
           <label className="fld">
             <span>Status</span>
@@ -211,7 +305,10 @@ export default function CostEstimationScreen() {
 
       <div className="panel">
         <div className="toolbar">
-          <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <div className="searchwrap">
+            <span className="material-symbols-rounded">search</span>
+            <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
           <span className="count">{total} estimations</span>
         </div>
         <div className="twrap">
@@ -257,6 +354,9 @@ export default function CostEstimationScreen() {
                         <td>
                           <button className="ibtn" title="Calculate" onClick={(e) => { e.stopPropagation(); calculate(r); }}>
                             <span className="material-symbols-rounded">functions</span>
+                          </button>
+                          <button className="ibtn" title="Reconcile vs Actual" onClick={(e) => { e.stopPropagation(); reconcile(r); }}>
+                            <span className="material-symbols-rounded">compare_arrows</span>
                           </button>
                           <button className="ibtn" title="Submit" onClick={(e) => { e.stopPropagation(); setActionTarget({ est: r, action: 'submit' }); }}>
                             <span className="material-symbols-rounded">send</span>
@@ -313,6 +413,16 @@ export default function CostEstimationScreen() {
                                   </tbody>
                                 </table>
                               )}
+                              {(r.actualMachineCost != null && r.actualMachineCost !== 0) && (
+                                <div style={{ marginTop: 8, padding: 8, background: '#fff', borderRadius: 6, border: '1px solid #e5e7eb' }}>
+                                  <b style={{ fontSize: 12 }}>Actual vs Estimated:</b>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 4, fontSize: 12 }}>
+                                    <div>Estimated: <b>{fmt(r.totalManufacturingCost)}</b></div>
+                                    <div>Actual: <b>{fmt(r.actualTotalCost)}</b></div>
+                                    <div>Variance: <b style={{ color: (r.varianceTotal ?? 0) > 0 ? '#dc3545' : '#28a745' }}>{fmt(r.varianceTotal)}</b></div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -344,6 +454,47 @@ export default function CostEstimationScreen() {
         onClose={() => setActionTarget(null)}
         onConfirm={performAction}
       />
+
+      {reconcileTarget && (
+        <div className="modal-overlay" onClick={reconcileClose}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+            <div className="modal-h"><h2>Cost Reconciliation</h2><button className="ibtn" onClick={reconcileClose}><span className="material-symbols-rounded">close</span></button></div>
+            <div className="modal-b">
+              {reconcileLoading ? (
+                <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Computing actuals...</div>
+              ) : reconcileResult ? (
+                <div>
+                  <div style={{ marginBottom: 12, fontSize: 12, color: '#666' }}>
+                    <b>{reconcileResult.estimationNumber}</b> — {reconcileResult.itemCode}
+                    {reconcileResult.workOrders.length > 0 && <> · Work Orders: {reconcileResult.workOrders.join(', ')}</>}
+                  </div>
+                  <table className="tbl">
+                    <thead><tr><th>Metric</th><th>Estimated</th><th>Actual</th><th>Variance</th><th>%</th></tr></thead>
+                    <tbody>
+                      <tr>
+                        <td>Machine</td>
+                        <td>{fmt(reconcileResult.estimated.machine)}</td>
+                        <td>{fmt(reconcileResult.actual.machine)}</td>
+                        <td style={{ color: reconcileResult.variance.machine > 0 ? '#dc3545' : '#28a745', fontWeight: 600 }}>{fmt(reconcileResult.variance.machine)}</td>
+                        <td style={{ color: (reconcileResult.variancePercent?.machine ?? 0) > 0 ? '#dc3545' : '#28a745' }}>{reconcileResult.variancePercent?.machine != null ? reconcileResult.variancePercent.machine.toFixed(1) + '%' : '—'}</td>
+                      </tr>
+                      <tr style={{ fontWeight: 700, borderTop: '2px solid #e5e7eb' }}>
+                        <td>Total</td>
+                        <td>{fmt(reconcileResult.estimated.total)}</td>
+                        <td>{fmt(reconcileResult.actual.total)}</td>
+                        <td style={{ color: reconcileResult.variance.total > 0 ? '#dc3545' : '#28a745' }}>{fmt(reconcileResult.variance.total)}</td>
+                        <td style={{ color: (reconcileResult.variancePercent?.total ?? 0) > 0 ? '#dc3545' : '#28a745' }}>{reconcileResult.variancePercent?.total != null ? reconcileResult.variancePercent.total.toFixed(1) + '%' : '—'}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="empty">No data. Click Reconcile on an estimation.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

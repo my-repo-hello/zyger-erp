@@ -12,6 +12,7 @@ import java.time.Instant;
 public class ItemMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) Long id;
     @Column(length = 60) String code;
+    @Column(length = 200) String name;
     @Column(length = 200) String description;
     @Column(length = 20) String uom;
     @Column(length = 60) String category;
@@ -64,6 +65,17 @@ public class ItemMaster {
     @Column(name = "default_receiving_store", length = 60) String defaultReceivingStore;
     @Column(name = "customer_owned") @Builder.Default Boolean customerOwned = Boolean.FALSE;
     @Column(name = "customer_code", length = 60) String customerCode;
+
+    @Column(name = "planning_policy", length = 30) String planningPolicy;
+    @Column(name = "ordering_policy", length = 30) String orderingPolicy;
+    @Column(name = "fixed_lot_size") BigDecimal fixedLotSize;
+    @Column(name = "min_stock_qty") BigDecimal minStockQty;
+    @Column(name = "max_stock_qty") BigDecimal maxStockQty;
+    @Column(name = "safety_stock_qty") BigDecimal safetyStockQty;
+    @Column(name = "purchase_lead_time_days") BigDecimal purchaseLeadTimeDays;
+    @Column(name = "manufacturing_lead_time_days") BigDecimal manufacturingLeadTimeDays;
+    @Column(name = "abc_class", length = 5) String abcClass;
+
     @Column(columnDefinition = "TEXT") String extraData;
     @Version Long version;
     String createdBy;

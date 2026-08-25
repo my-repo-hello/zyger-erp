@@ -15,7 +15,10 @@ interface ComponentBreakdown {
 interface FeasibilityResult {
   maxProducibleQty: number;
   limitingComponent: string;
+  limitingComponentAvailableQty?: number;
   isFeasible: boolean;
+  bomIdUsed?: number;
+  resultJson?: string;
   breakdown: ComponentBreakdown[];
 }
 
@@ -29,6 +32,8 @@ export default function FgPossibleScreen() {
   const [itemCode, setItemCode] = useState('');
   const [targetDate, setTargetDate] = useState('');
   const [qty, setQty] = useState<number | ''>('');
+  const [includeWip, setIncludeWip] = useState(true);
+  const [includeOpenPo, setIncludeOpenPo] = useState(true);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<FeasibilityResult | null>(null);
   const [checked, setChecked] = useState(false);
@@ -51,6 +56,8 @@ export default function FgPossibleScreen() {
         const payload: Record<string, unknown> = { itemCode: itemCode.trim() };
         if (targetDate) payload.targetDate = targetDate;
         if (qty) payload.quantity = qty;
+        payload.includeWip = includeWip;
+        payload.includeOpenPo = includeOpenPo;
         const { data } = await apiClient.post('/v1/planning/fg-possible/check', payload);
         setResult(data);
       } catch {
@@ -88,6 +95,14 @@ export default function FgPossibleScreen() {
           <label className="fld">
             <span>Target Qty</span>
             <input className="in" type="number" step="1" min="1" placeholder="Leave empty for max" value={qty} onChange={(e) => setQty(e.target.value ? Number(e.target.value) : '')} />
+          </label>
+          <label className="fld" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 20 }}>
+            <input type="checkbox" checked={includeWip} onChange={(e) => setIncludeWip(e.target.checked)} />
+            <span style={{ fontSize: 13 }}>Include WIP</span>
+          </label>
+          <label className="fld" style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 20 }}>
+            <input type="checkbox" checked={includeOpenPo} onChange={(e) => setIncludeOpenPo(e.target.checked)} />
+            <span style={{ fontSize: 13 }}>Include Open PO</span>
           </label>
           <button className="btn btn-p" onClick={checkFeasibility} disabled={busy}>
             <span className="material-symbols-rounded">search</span> Check Feasibility

@@ -10,4 +10,5 @@ import java.util.List;
 public interface GapAnalysisResultRepository extends JpaRepository<GapAnalysisResult, Long> {
     List<GapAnalysisResult> findByRunId(Long runId);
     List<GapAnalysisResult> findByGapType(String gapType);
+    List<GapAnalysisResult> findByRunIdAndSeverityIn(Long runId, List<String> severities);
 }

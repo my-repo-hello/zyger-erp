@@ -228,9 +228,9 @@ export default function PoInwardList({
                   COLUMNS.map((c) => ({
                     key: c.field,
                     label: c.label,
-                    render: (value: unknown, row: PoInwardListRowDto) =>
+                    render: (value: unknown, row: Record<string, unknown>) =>
                       c.field === 'date'
-                        ? formatDate(row.date)
+                        ? formatDate((row as unknown as PoInwardListRowDto).date)
                         : c.field === 'firstRate' || c.field === 'totalAmount'
                           ? String(formatMoney(Number(value ?? 0)))
                           : c.field === 'totalQty'

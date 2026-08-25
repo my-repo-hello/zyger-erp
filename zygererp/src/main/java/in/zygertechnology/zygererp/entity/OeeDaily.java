@@ -5,12 +5,14 @@ import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "oee_daily", uniqueConstraints = {
     @UniqueConstraint(columnNames = {"plant_id", "machine_id", "oee_date"})
 })
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class OeeDaily {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;

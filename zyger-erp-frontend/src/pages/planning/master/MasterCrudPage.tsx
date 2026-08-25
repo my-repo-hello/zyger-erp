@@ -22,6 +22,7 @@ export default function MasterCrudPage({ title, subtitle, apiMethod, fields }: M
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MasterRow | null>(null);
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState('');
 
   const getResourcePath = () => {
     return apiMethod === 'getWorkCenters' ? 'work-centers'
@@ -104,6 +105,13 @@ export default function MasterCrudPage({ title, subtitle, apiMethod, fields }: M
         </div>
       </div>
       <div className="panel">
+        <div className="toolbar">
+          <div className="searchwrap">
+            <span className="material-symbols-rounded">search</span>
+            <input className="in" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <span className="count">{rows.filter(r => !search || r.code?.toLowerCase().includes(search.toLowerCase()) || r.name?.toLowerCase().includes(search.toLowerCase())).length} records</span>
+        </div>
         <div className="twrap">
           {loading ? (
             <div className="empty"><span className="material-symbols-rounded">hourglass_empty</span> Loading...</div>
@@ -111,9 +119,9 @@ export default function MasterCrudPage({ title, subtitle, apiMethod, fields }: M
             <table className="tbl">
               <thead><tr><th>Code</th><th>Name</th><th>Actions</th></tr></thead>
               <tbody>
-                {rows.length === 0 ? (
+                {rows.filter(r => !search || r.code?.toLowerCase().includes(search.toLowerCase()) || r.name?.toLowerCase().includes(search.toLowerCase())).length === 0 ? (
                   <tr><td colSpan={3}><div className="empty"><span className="material-symbols-rounded">description</span> No records.</div></td></tr>
-                ) : rows.map((r) => (
+                ) : rows.filter(r => !search || r.code?.toLowerCase().includes(search.toLowerCase()) || r.name?.toLowerCase().includes(search.toLowerCase())).map((r) => (
                   <tr key={r.id}>
                     <td>{r.code}</td>
                     <td>{r.name}</td>

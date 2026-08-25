@@ -1,6 +1,6 @@
-export function exportToCsv<T extends Record<string, unknown>>(
-  data: T[],
-  columns: { key: string; label: string; render?: (value: unknown, row: T) => string }[],
+export function exportToCsv(
+  data: Record<string, unknown>[],
+  columns: { key: string; label: string; render?: (value: unknown, row: Record<string, unknown>) => string }[],
   filename: string,
 ) {
   const header = columns.map((c) => `"${c.label.replace(/"/g, '""')}"`).join(',');
@@ -21,4 +21,13 @@ export function exportToCsv<T extends Record<string, unknown>>(
   a.download = `${filename}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+export function exportSimpleCsv(
+  data: Record<string, unknown>[],
+  filename: string,
+) {
+  if (data.length === 0) return;
+  const columns = Object.keys(data[0]).map((k) => ({ key: k, label: k }));
+  exportToCsv(data, columns, filename);
 }

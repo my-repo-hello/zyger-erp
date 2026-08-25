@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 import java.time.LocalDate;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 /**
  * Measuring instrument used during inspections.
@@ -19,6 +20,7 @@ import java.time.Instant;
 })
 @Getter
 @Setter
+@EntityListeners(AuditEntityListener.class)
 public class QualityCalibrationInstrument {
 
     @Id

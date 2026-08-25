@@ -6,15 +6,21 @@ spring:
   cache:
     type: com.github.benmanes.caffeine.cache.CaffeineCacheManager
   datasource:
-    url: jdbc:postgresql://localhost:5432/zyger_erp
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/zyger_erp}
     username: ${DB_USERNAME:zyger}
     password: ${DB_PASSWORD:zyger123}
+    hikari:
+      initialization-fail-timeout: -1
   jackson:
     deserialization:
       fail-on-null-for-primitives: false
   jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
     hibernate:
       ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
     open-in-view: false
   flyway:
     enabled: true

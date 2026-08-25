@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import apiClient from '../../../api/axiosClient';
 import { useToast } from '../../../contexts/ToastContext';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -99,22 +99,25 @@ export default function JobCardScreen({ initialSearch }: { initialSearch?: strin
   const [machines, setMachines] = useState<Array<{ code: string; name: string }>>([]);
   const [users, setUsers] = useState<Array<{ username: string; fullName: string }>>([]);
   const [workCenters, setWorkCenters] = useState<Array<{ code: string; name: string }>>([]);
+  const [shifts, setShifts] = useState<Array<{ code: string; name: string }>>([]);
   const [auditOpen, setAuditOpen] = useState(false);
 
   const fetchMasters = useCallback(async () => {
     try {
-      const [mRes, uRes, wRes] = await Promise.allSettled([
+      const [mRes, uRes, wRes, sRes] = await Promise.allSettled([
         apiClient.get('/master/machines', { params: { size: 200 } }),
         apiClient.get('/master/users', { params: { size: 200 } }),
         apiClient.get('/master/work-centers', { params: { size: 100 } }),
+        apiClient.get('/master/shifts', { params: { size: 100 } }),
       ]);
       if (mRes.status === 'fulfilled') setMachines((mRes.value.data?.content ?? mRes.value.data ?? []).filter((m: any) => m.active !== false));
       if (uRes.status === 'fulfilled') setUsers((uRes.value.data?.content ?? uRes.value.data ?? []).filter((u: any) => u.active !== false));
       if (wRes.status === 'fulfilled') setWorkCenters(wRes.value.data?.content ?? wRes.value.data ?? []);
+      if (sRes.status === 'fulfilled') setShifts(sRes.value.data?.content ?? sRes.value.data ?? []);
     } catch { /* ignore */ }
   }, []);
 
-  useEffect(() => { if (expandedId) fetchMasters(); }, [expandedId, fetchMasters]);
+  useEffect(() => { if (expandedId || tab === 'form') fetchMasters(); }, [expandedId, tab, fetchMasters]);
 
   const load = async () => {
     setLoading(true);
@@ -302,6 +305,12 @@ export default function JobCardScreen({ initialSearch }: { initialSearch?: strin
             </label>
             <label className="fld"><span>Planned Start Date</span><input className="in" type="date" value={String(form.plannedStartDate ?? '').slice(0, 10)} onChange={(e) => set('plannedStartDate', e.target.value)} /></label>
             <label className="fld"><span>Planned End Date</span><input className="in" type="date" value={String(form.plannedEndDate ?? '').slice(0, 10)} onChange={(e) => set('plannedEndDate', e.target.value)} /></label>
+            <label className="fld"><span>Shift</span>
+              <select className="in" value={String(form.shiftCode ?? '')} onChange={(e) => set('shiftCode', e.target.value)}>
+                <option value="">Select shift...</option>
+                {shifts.map((s) => <option key={s.code} value={s.code}>{s.code} - {s.name}</option>)}
+              </select>
+            </label>
             <label className="fld"><span>Route Sheet No</span><input className="in" value={String(form.routeSheetNumber ?? '')} onChange={(e) => set('routeSheetNumber', e.target.value)} /></label>
             <label className="fld"><span>Production BOM No</span><input className="in" value={String(form.bomNumber ?? '')} onChange={(e) => set('bomNumber', e.target.value)} /></label>
             <label className="fld"><span>Customer Code</span><input className="in" value={String(form.customerCode ?? '')} onChange={(e) => set('customerCode', e.target.value)} /></label>
@@ -361,8 +370,8 @@ export default function JobCardScreen({ initialSearch }: { initialSearch?: strin
                   {filtered.length === 0 ? (
                     <tr><td colSpan={11}><div className="empty"><span className="material-symbols-rounded">description</span> No job cards.</div></td></tr>
                   ) : filtered.map((r) => (
-                    <>
-                      <tr key={r.id} onClick={() => loadSubjobs(r.id)} style={{ cursor: 'pointer' }}>
+                    <React.Fragment key={r.id}>
+                      <tr onClick={() => loadSubjobs(r.id)} style={{ cursor: 'pointer' }}>
                         <td><span className="material-symbols-rounded">{expandedId === r.id ? 'expand_less' : 'expand_more'}</span></td>
                         <td><b>{r.jobCardNumber}</b></td>
                         <td>{r.workOrderNumber ?? '-'}</td>
@@ -442,7 +451,7 @@ export default function JobCardScreen({ initialSearch }: { initialSearch?: strin
                           </td>
                         </tr>
                       )}
-                    </>
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
@@ -463,7 +472,7 @@ export default function JobCardScreen({ initialSearch }: { initialSearch?: strin
               <select className="in" value={String(subForm.machineCode ?? '')} onChange={(e) => setSub('machineCode', e.target.value)}>
                 <option value="">Select machine...</option>
                 {machines.map((m) => <option key={m.code} value={m.code}>{m.code} - {m.name}</option>)}
-                {subForm.machineCode && !machines.some((m) => m.code === subForm.machineCode) && <option value={String(subForm.machineCode)}>{String(subForm.machineCode)}</option>}
+                {Boolean(subForm.machineCode) && !machines.some((m) => m.code === subForm.machineCode) && <option value={String(subForm.machineCode)}>{String(subForm.machineCode)}</option>}
               </select>
             </label>
             <label className="fld"><span>Work Center</span>
@@ -515,7 +524,7 @@ export default function JobCardScreen({ initialSearch }: { initialSearch?: strin
             </div>
             {compCheck.canComplete ? (
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                <button className="btn btn-p" onClick={() => { setShowCompCheck(false); setActionTarget({ id: expandedId!, action: 'complete' }); }}>
+                <button className="btn btn-p" onClick={() => { if (!expandedId) return; setShowCompCheck(false); setActionTarget({ id: expandedId, action: 'complete' }); }}>
                   <span className="material-symbols-rounded" style={{ fontSize: 18 }}>check_circle</span> Complete Job Card
                 </button>
               </div>

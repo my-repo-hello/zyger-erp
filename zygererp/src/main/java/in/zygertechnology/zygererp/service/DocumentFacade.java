@@ -17,6 +17,7 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import in.zygertechnology.zygererp.common.Idempotent;
+import in.zygertechnology.zygererp.config.BusinessRuleException;
 import in.zygertechnology.zygererp.security.CurrentUserRoles;
 
 import java.lang.reflect.Field;
@@ -41,6 +42,7 @@ public class DocumentFacade {
     @Autowired PartyRepository parties;
     @Autowired DocumentWorkflowEngine workflowEngine;
     @Autowired BackdatedEntryGuardService backdatedEntryGuard;
+    @Lazy @Autowired AttachmentService attachmentService;
 
     private final Map<String, Class<? extends DocEntity>> reg = new HashMap<>();
 
@@ -502,7 +504,7 @@ public class DocumentFacade {
 
     private void createQualityInspectionIfRequired(DocEntity e, Map<String, Object> body, String user) {
         String key = findKeyForEntity(e);
-        if (!Set.of("po-inward", "lo-inward", "jo-inward", "general-inward").contains(key)) {
+        if (!Set.of("po-inward", "lo-inward", "jo-inward", "general-inward", "grn").contains(key)) {
             return;
         }
 
@@ -596,7 +598,7 @@ public class DocumentFacade {
 
     private QualityInspectionType resolveInspectionType(String sourceKey) {
         return switch (sourceKey) {
-            case "po-inward" -> QualityInspectionType.IQC;
+            case "po-inward", "grn" -> QualityInspectionType.IQC;
             case "lo-inward" -> QualityInspectionType.LO;
             case "jo-inward" -> QualityInspectionType.FAI;
             case "general-inward" -> QualityInspectionType.LINE;
@@ -798,6 +800,40 @@ public class DocumentFacade {
             case "close" -> { e.setClosedBy(user); e.setClosedAt(Instant.now()); }
             case "cancel" -> { e.setCancelledBy(user); e.setCancelledAt(Instant.now()); }
             case "reopen" -> { e.setReopenedBy(user); e.setReopenedAt(Instant.now()); }
+        }
+
+        // FRS §6.3: Mandatory-attachment enforcement on close
+        if ("close".equals(action)) {
+            String attachmentOwnerType = docKey.replace("/", "-");
+            if (!attachmentService.validateMandatoryAttachments(attachmentOwnerType, id)) {
+                throw new BusinessRuleException("MANDATORY_ATTACHMENT_MISSING",
+                        "Cannot close: required attachments are missing for " + docKey,
+                        Map.of("docKey", docKey, "docId", id));
+            }
+        }
+
+        // FRS §8: NCR REWORK disposition → auto-create rework work order stub
+        if ("approve".equals(action) && "quality-ncr".equals(docKey) && e instanceof QualityNcr ncr) {
+            String disp = ncr.getDisposition();
+            if ("REWORK".equalsIgnoreCase(disp) || "REWORK".equalsIgnoreCase(ncr.getDispositionType())) {
+                try {
+                    WorkOrder reworkWO = new WorkOrder();
+                    String woNo = numbers.next("WORK_ORDER", "WO");
+                    reworkWO.setWoNumber(woNo);
+                    reworkWO.setItemCode(ncr.getItemCode());
+                    reworkWO.setOrderQuantity(ncr.getQuantityAffected());
+                    reworkWO.setWoType("REWORK");
+                    reworkWO.setSourceType("quality-ncr");
+                    reworkWO.setSourceDocNo(ncr.getDocNo());
+                    reworkWO.setStatus("DRAFT");
+                    reworkWO.setCreatedBy(user);
+                    reworkWO.setCreatedAt(Instant.now());
+                    reworkWO.setUpdatedAt(Instant.now());
+                    em.persist(reworkWO);
+                } catch (Exception ex) {
+                    log.error("Failed to create rework WO for NCR {}: {}", ncr.getDocNo(), ex.getMessage());
+                }
+            }
         }
 
         return e;

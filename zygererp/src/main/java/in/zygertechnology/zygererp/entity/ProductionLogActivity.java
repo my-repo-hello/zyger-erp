@@ -5,11 +5,13 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.math.BigDecimal;
 import java.time.Instant;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "production_log_activity")
 @Getter @Setter @Builder
 @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class ProductionLogActivity {
 
     @Id
@@ -35,6 +37,11 @@ public class ProductionLogActivity {
 
     @Column(precision = 18, scale = 4)
     private BigDecimal quantity;
+
+    @Column(name = "related_breakdown_id") Long relatedBreakdownId;
+
+    @Column(name = "qty_completed_during_activity", precision = 18, scale = 4)
+    private BigDecimal qtyCompletedDuringActivity;
 
     @Column(length = 500)
     private String remarks;

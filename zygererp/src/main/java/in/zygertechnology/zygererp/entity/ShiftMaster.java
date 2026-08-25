@@ -4,10 +4,12 @@ import jakarta.persistence.*;
 import lombok.*;
 import java.time.Instant;
 import java.time.LocalTime;
+import in.zygertechnology.zygererp.config.AuditEntityListener;
 
 @Entity
 @Table(name = "shift_master")
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
+@EntityListeners(AuditEntityListener.class)
 public class ShiftMaster {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     Long id;
@@ -27,6 +29,8 @@ public class ShiftMaster {
 
     @Column(nullable = false)
     LocalTime endTime;
+
+    @Builder.Default Boolean crossesMidnight = Boolean.FALSE;
 
     @Builder.Default Boolean active = Boolean.TRUE;
 

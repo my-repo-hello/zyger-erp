@@ -1,6 +1,0 @@
-**/node_modules
-**/.gradle
-**/.git
-**/src/main/resources/static
-*.md
-*.log
